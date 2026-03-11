@@ -33,23 +33,13 @@
                 href="/"
                 class="flex items-center gap-2 font-bold text-lg text-white no-underline"
             >
-                <svg
-                    width="28"
-                    height="28"
-                    viewBox="0 0 28 28"
-                    fill="none"
+                <img
+                    src="/favicon.svg"
+                    width="40"
+                    height="40"
+                    alt=""
                     aria-hidden="true"
-                >
-                    <rect width="28" height="28" rx="7" fill="#84cc16" />
-                    <text
-                        x="7"
-                        y="20"
-                        font-family="monospace"
-                        font-size="14"
-                        font-weight="700"
-                        fill="white">d</text
-                    >
-                </svg>
+                />
                 <span>dal</span>
             </a>
 

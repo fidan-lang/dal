@@ -5,23 +5,13 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div>
                 <div class="flex items-center gap-2 font-bold text-white mb-4">
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 28 28"
-                        fill="none"
+                    <img
+                        src="/favicon.svg"
+                        width="40"
+                        height="40"
+                        alt=""
                         aria-hidden="true"
-                    >
-                        <rect width="28" height="28" rx="7" fill="#84cc16" />
-                        <text
-                            x="7"
-                            y="20"
-                            font-family="monospace"
-                            font-size="14"
-                            font-weight="700"
-                            fill="white">d</text
-                        >
-                    </svg>
+                    />
                     dal
                 </div>
                 <p class="text-sm text-[var(--color-text-muted)]">
