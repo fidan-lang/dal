@@ -95,8 +95,18 @@ async function request<T>(
     if (!res.ok) {
         let errorMessage = `${res.status} ${res.statusText}`;
         try {
-            const json = await res.json();
-            errorMessage = json?.error?.message ?? errorMessage;
+            const json: unknown = await res.json();
+            if (
+                typeof json === "object" &&
+                json !== null &&
+                "error" in json &&
+                typeof json.error === "object" &&
+                json.error !== null &&
+                "message" in json.error &&
+                typeof json.error.message === "string"
+            ) {
+                errorMessage = json.error.message;
+            }
         } catch {
             // ignore
         }
