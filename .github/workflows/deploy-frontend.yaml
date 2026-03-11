@@ -11,6 +11,7 @@ on:
 jobs:
     deploy:
         runs-on: ubuntu-latest
+        environment: cloudflare-deploy
         permissions:
             contents: read
             deployments: write
