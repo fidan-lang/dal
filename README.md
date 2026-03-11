@@ -4,7 +4,7 @@
 
 **The official package registry for the [Fidan](https://github.com/fidan-lang/fidan) programming language.**
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE) &nbsp; ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
+[![License](https://img.shields.io/badge/license-Apache%202.0%20(Modified)-blue.svg)](LICENSE) &nbsp; ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
 
 [Overview](#overview) • [Architecture](#architecture) • [Getting Started](#getting-started) • [API Reference](#api-reference) • [Contributing](#contributing)
 
@@ -177,6 +177,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and pu
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under a modified version of the [Apache License 2.0](LICENSE).
 
 Copyright © 2026 Kaan Gönüldinc (AppSolves)

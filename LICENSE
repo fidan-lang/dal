@@ -196,36 +196,37 @@
    limitations under the License.
 
    ----------------------------------------------------------------
-   Fidan™ Additional Terms
+   Dal™ Additional Terms
    ----------------------------------------------------------------
 
    1. Trademark
 
-   The name "Fidan", the Fidan logo, and related branding are
+   The name "Dal", the Dal logo, and related branding are
    trademarks of Kaan Gönüldinc (AppSolves).
 
-   This license does not grant permission to use the "Fidan" name
-   or branding for derivative languages, forks, or competing
-   distributions without explicit written permission.
+   This license does not grant permission to use the "Dal" name
+   or branding for competing package registries, forks presented
+   as the official registry, or unofficial distributions without
+   explicit written permission.
 
-   Forks or modified versions of the language must not present
-   themselves as the official Fidan language.
+   Forks or modified versions of Dal must not present themselves
+   as the official Dal package registry for the Fidan language.
 
 
-   2. Commercial Redistribution of the Language
+   2. Commercial Redistribution of the Registry
 
-   The Fidan™ programming language itself — including its source code,
-   compiler, interpreter, runtime, official distributions, and official
-   extensions — may not be sold or marketed as a standalone commercial product
-   or programming language distribution without explicit written
-   permission from the copyright holder.
+   The Dal™ package registry — including its source code, server,
+   worker, index infrastructure, and official hosted service — may
+   not be sold or marketed as a standalone commercial product or
+   competing registry service without explicit written permission
+   from the copyright holder.
 
    This restriction does NOT apply to:
 
-   • distribution of Fidan through open-source package managers
-   • distribution as part of operating system repositories
-   • inclusion of Fidan in development environments or toolchains
-   • software written using the Fidan programming language
+   • self-hosting Dal for private or internal use
+   • distribution through open-source package managers or OS repositories
+   • inclusion of Dal in development environments or toolchains
+   • packages published to and distributed through Dal
 
-   Programs written in Fidan may be used, distributed, and sold
+   Packages published to Dal may be used, distributed, and sold
    commercially without restriction.
