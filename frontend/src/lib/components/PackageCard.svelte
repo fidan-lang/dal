@@ -7,7 +7,7 @@
 
 <a
     href="/packages/{pkg.name}"
-    class="block p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)] hover:border-[var(--color-primary)] transition-colors group"
+    class="block p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)] hover:border-[var(--color-primary)] hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(132,204,22,0.1)] transition-all duration-200 group"
 >
     <div class="flex items-start justify-between gap-4 mb-2">
         <h3

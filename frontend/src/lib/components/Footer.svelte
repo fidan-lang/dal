@@ -63,7 +63,7 @@
                 <ul class="space-y-2 text-sm text-[var(--color-text-muted)]">
                     <li>
                         <a
-                            href="https://github.com/fidan-lang/fidan"
+                            href="https://github.com/fidan-lang/dal"
                             target="_blank"
                             rel="noopener noreferrer"
                             class="hover:text-[var(--color-text)]"
@@ -79,6 +79,16 @@
                             class="hover:text-[var(--color-text)]"
                         >
                             Fidan Language
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="https://github.com/sponsors/fidan-lang"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="hover:text-[var(--color-text)]"
+                        >
+                            Sponsor on GitHub ♥️
                         </a>
                     </li>
                 </ul>

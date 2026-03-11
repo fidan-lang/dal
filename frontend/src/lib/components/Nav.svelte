@@ -27,11 +27,11 @@
 
 <nav class="border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex items-center justify-between h-14">
+        <div class="relative flex items-center h-14">
             <!-- Logo -->
             <a
                 href="/"
-                class="flex items-center gap-2 font-bold text-lg text-white no-underline"
+                class="flex items-center gap-2 font-bold text-lg text-white no-underline group"
             >
                 <img
                     src="/favicon.svg"
@@ -39,16 +39,22 @@
                     height="40"
                     alt=""
                     aria-hidden="true"
+                    class="transition-transform duration-200 group-hover:scale-110"
                 />
-                <span>dal</span>
+                <span
+                    class="transition-colors duration-200 group-hover:text-[var(--color-primary-light)]"
+                    >dal</span
+                >
             </a>
 
             <!-- Desktop nav -->
-            <div class="hidden md:flex items-center gap-6">
+            <div
+                class="hidden md:flex absolute left-1/2 -translate-x-1/2 items-center gap-6"
+            >
                 {#each navLinks as link}
                     <a
                         href={link.href}
-                        class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                        class="relative text-sm text-[var(--color-text-muted)] hover:text-white transition-colors duration-200 pb-1 after:content-[''] after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-0 hover:after:w-full after:bg-[var(--color-primary)] after:transition-[width] after:duration-200"
                         class:text-white={page.url.pathname.startsWith(
                             link.href,
                         )}
@@ -59,7 +65,7 @@
             </div>
 
             <!-- Auth area -->
-            <div class="hidden md:flex items-center gap-3">
+            <div class="hidden md:flex ml-auto items-center gap-3">
                 {#if $currentUser}
                     <div class="relative">
                         <button
@@ -88,7 +94,7 @@
                         </button>
                         {#if dropdownOpen}
                             <div
-                                class="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-xl z-50 py-1"
+                                class="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-xl z-50 py-1 animate-scale-in"
                                 role="menu"
                             >
                                 <a
@@ -120,13 +126,13 @@
                 {:else}
                     <a
                         href="/login"
-                        class="px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                        class="px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-white transition-colors duration-200"
                     >
                         Sign in
                     </a>
                     <a
                         href="/register"
-                        class="px-4 py-1.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white text-sm font-medium rounded-[var(--radius-sm)] transition-colors"
+                        class="px-4 py-1.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] active:scale-95 text-white text-sm font-medium rounded-[var(--radius-sm)] transition-all duration-200"
                     >
                         Sign up
                     </a>

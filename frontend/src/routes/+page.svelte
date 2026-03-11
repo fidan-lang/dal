@@ -25,20 +25,20 @@
         class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center relative"
     >
         <div
-            class="inline-flex items-center gap-2 px-3 py-1 bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 rounded-full text-sm text-[var(--color-primary)] mb-6"
+            class="inline-flex items-center gap-2 px-3 py-1 bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 rounded-full text-sm text-[var(--color-primary)] mb-6 animate-fade-in-up"
         >
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)]"
             ></span>
             For the Fidan programming language
         </div>
         <h1
-            class="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight tracking-tight"
+            class="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight tracking-tight animate-fade-in-up [animation-delay:75ms]"
         >
             The package registry for<br />
             <span class="text-[var(--color-primary)]">Fidan</span>
         </h1>
         <p
-            class="text-lg text-[var(--color-text-muted)] max-w-2xl mx-auto mb-10"
+            class="text-lg text-[var(--color-text-muted)] max-w-2xl mx-auto mb-10 animate-fade-in-up [animation-delay:150ms]"
         >
             Discover, publish, and manage packages for the Fidan programming
             language. Install with <code
@@ -48,23 +48,29 @@
         </p>
 
         <!-- Search bar -->
-        <form action="/search" method="GET" class="max-w-xl mx-auto flex gap-2">
+        <form
+            action="/search"
+            method="GET"
+            class="max-w-xl mx-auto flex gap-2 animate-fade-in-up [animation-delay:225ms]"
+        >
             <input
                 name="q"
                 type="search"
                 placeholder="Search packages…"
-                class="flex-1 px-4 py-3 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+                class="flex-1 px-4 py-3 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:shadow-[0_0_20px_rgba(132,204,22,0.1)] transition-all duration-200 text-sm"
             />
             <button
                 type="submit"
-                class="px-6 py-3 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+                class="px-6 py-3 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] active:scale-95 text-white font-medium rounded-[var(--radius-md)] transition-all duration-200 text-sm"
             >
                 Search
             </button>
         </form>
 
         <!-- Quick-start snippet -->
-        <div class="mt-10 inline-block text-left">
+        <div
+            class="mt-10 inline-block text-left animate-fade-in-up [animation-delay:300ms]"
+        >
             <p class="text-xs text-[var(--color-text-muted)] mb-2 text-center">
                 Quick install
             </p>
@@ -114,9 +120,14 @@
         <h2 class="text-xl font-semibold text-white">Recently updated</h2>
         <a
             href="/packages"
-            class="text-sm text-[var(--color-primary)] hover:underline"
-            >View all →</a
+            class="text-sm text-[var(--color-primary)] hover:text-[var(--color-primary-light)] transition-colors duration-200 flex items-center gap-1 group/link"
         >
+            View all
+            <span
+                class="transition-transform duration-200 group-hover/link:translate-x-1"
+                >→</span
+            >
+        </a>
     </div>
     {#if data.recent.items.length}
         <div
@@ -135,7 +146,9 @@
 
 <!-- CTA / feature cards -->
 <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div
+        class="grid grid-cols-1 md:grid-cols-3 gap-6 [&>div]:transition-all [&>div]:duration-200 [&>div:hover]:-translate-y-1 [&>div:hover]:border-[#84cc16]/40 [&>div:hover]:shadow-[0_8px_30px_rgba(132,204,22,0.08)]"
+    >
         <div
             class="p-6 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
         >
