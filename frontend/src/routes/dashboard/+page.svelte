@@ -83,7 +83,7 @@
             <p>You haven't published any packages yet.</p>
             <p class="text-sm mt-2">
                 Run <code class="font-mono text-[var(--color-primary-light)]"
-                    >dal publish</code
+                    >fidan dal publish</code
                 > in your project to get started.
             </p>
         </div>

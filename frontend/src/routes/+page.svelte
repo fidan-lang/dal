@@ -173,7 +173,7 @@
             <p class="text-sm text-[var(--color-text-muted)]">
                 Tag a release, run <code
                     class="font-mono text-xs text-[var(--color-primary-light)]"
-                    >dal publish</code
+                    >fidan dal publish</code
                 >, and your package is live in seconds.
             </p>
         </div>
