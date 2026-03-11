@@ -1,5 +1,9 @@
 <div align="center">
 
+<p align="center">
+  <img src="./frontend/static/favicon.svg" width="40%" alt="Dal Banner">
+</p>
+
 # Dal
 
 **The official package registry for the [Fidan](https://github.com/fidan-lang/fidan) programming language.**
