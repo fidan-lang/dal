@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Dal integration test stack
+#
+# Uses different ports from docker-compose.yml so both stacks can
+# run simultaneously without conflicts.
+#
+#   postgres  → localhost:5433
+#   localstack → localhost:4567
+#
+# Start before running tests:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#
+# For auth tests (register / login) you also need cognito-local:
+#   npx --yes @jagreehal/cognito-local
+# Then set TEST_COGNITO_ENDPOINT_URL=http://localhost:9229 in .env.test
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dal_test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: dal_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data # in-memory for speed in CI
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dal_test"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+
+  localstack-test:
+    image: localstack/localstack:3
+    restart: unless-stopped
+    environment:
+      SERVICES: s3,sqs
+      DEFAULT_REGION: eu-central-1
+      AWS_DEFAULT_REGION: eu-central-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    ports:
+      - "4567:4566"
+    volumes:
+      - ./scripts/localstack-init-test.sh:/etc/localstack/init/ready.d/01-init.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

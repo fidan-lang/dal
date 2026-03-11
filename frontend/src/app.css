@@ -197,3 +197,27 @@ body {
 .animate-scale-in {
     animation: scale-in 0.15s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* Page transitions (View Transitions API) */
+@keyframes page-fade-out {
+    to {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+}
+
+::view-transition-old(root) {
+    animation: 160ms ease-in both page-fade-out;
+}
+
+::view-transition-new(root) {
+    animation: 240ms ease-out both fade-in-up;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+        animation: none;
+    }
+}
