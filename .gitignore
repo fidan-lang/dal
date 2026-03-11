@@ -26,6 +26,7 @@ Thumbs.db
 # Build artefacts (non-Rust)
 dist/
 .svelte-kit/
+.wrangler/
 node_modules/
 .pnpm-store/
 pnpm-lock.yaml
