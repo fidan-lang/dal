@@ -97,7 +97,12 @@
         <div
             class="border-t border-[var(--color-border)] mt-8 pt-6 text-center text-xs text-[var(--color-text-muted)]"
         >
-            &copy; {new Date().getFullYear()} Dal / Fidan. All rights reserved.
+            <p>
+                &copy; {new Date().getFullYear()} Dal / Fidan. All rights reserved.
+            </p>
+            <p class="mt-2.5">
+                Fidan™ and Dal™ are trademarks of Kaan Gönüldinc (AppSolves).
+            </p>
         </div>
     </div>
 </footer>
