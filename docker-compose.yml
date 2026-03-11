@@ -1,0 +1,109 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Dal local-dev compose stack
+#
+# Services:
+#   postgres   – PostgreSQL 16 (mimics RDS)
+#   localstack – AWS S3 + SQS emulation (no Cognito – use real AWS free-tier)
+#   dal-server – Axum HTTP server
+#   dal-worker – SQS consumer + email jobs
+#
+# Usage:
+#   cp .env.example .env          # fill in your real AWS Cognito creds
+#   docker compose up --build
+#
+# For Cognito in dev: create a real AWS account (free tier) *or* run the
+# unofficial `cognito-local` image (not included here – see Plan.md §Appendix).
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dal
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dal
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── LocalStack (S3 + SQS) ──────────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3
+    restart: unless-stopped
+    environment:
+      SERVICES: s3,sqs
+      DEFAULT_REGION: eu-central-1
+      AWS_DEFAULT_REGION: eu-central-1
+      # LocalStack Community doesn't need real credentials
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      # Persist across restarts
+      PERSISTENCE: 1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+      # Seed script: creates the bucket + FIFO queue on startup
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/01-init.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── Dal server ──────────────────────────────────────────────────────────────
+  dal-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://dal:password@postgres:5432/dal
+      DAL_S3_ENDPOINT_URL: http://localstack:4566
+      DAL_SQS_ENDPOINT_URL: http://localstack:4566
+      DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo
+      DAL_LISTEN_ADDR: "0.0.0.0:8080"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    ports:
+      - "8080:8080"
+
+  # ── Dal worker ──────────────────────────────────────────────────────────────
+  dal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://dal:password@postgres:5432/dal
+      DAL_S3_ENDPOINT_URL: http://localstack:4566
+      DAL_SQS_ENDPOINT_URL: http://localstack:4566
+      DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+
+volumes:
+  postgres_data:
+  localstack_data:

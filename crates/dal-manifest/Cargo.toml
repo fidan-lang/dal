@@ -1,0 +1,15 @@
+[package]
+name = "dal-manifest"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+
+[dependencies]
+dal-common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+semver.workspace = true
+thiserror.workspace = true
+url.workspace = true

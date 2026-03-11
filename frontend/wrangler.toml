@@ -1,0 +1,6 @@
+name = "dal-frontend"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = ".svelte-kit/cloudflare"
+
+[vars]
+PUBLIC_API_URL = "https://api.dal.fidan.dev"

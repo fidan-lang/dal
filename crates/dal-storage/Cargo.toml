@@ -1,0 +1,23 @@
+[package]
+name = "dal-storage"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+
+[dependencies]
+bytes.workspace = true
+tar.workspace = true
+dal-common.workspace = true
+dal-manifest.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+hex.workspace = true
+flate2.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-runtime-api.workspace = true

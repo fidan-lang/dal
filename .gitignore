@@ -1,0 +1,40 @@
+/target
+Cargo.lock
+.env
+.env.local
+.env.*.local
+**/LOCAL
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+
+# IDE / editor
+.vscode/settings.json
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artefacts (non-Rust)
+dist/
+.svelte-kit/
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+
+# Coverage
+lcov.info
+*.profraw
+*.profdata
+
+# Deployment
+.serverless/
+cdk.out/

@@ -1,0 +1,116 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dal-common",
+    "crates/dal-manifest",
+    "crates/dal-db",
+    "crates/dal-auth",
+    "crates/dal-storage",
+    "crates/dal-index",
+    "crates/dal-server",
+    "crates/dal-worker",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+authors = ["Fidan Contributors", "Kaan Gönüldinc <contact@appsolves.dev>"]
+license-file = "LICENSE"
+repository = "https://github.com/fidan-lang/dal"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+# ── Intra-workspace crates ───────────────────────────────────────────────────
+[workspace.dependencies]
+dal-common = { path = "crates/dal-common" }
+dal-manifest = { path = "crates/dal-manifest" }
+dal-db = { path = "crates/dal-db" }
+dal-auth = { path = "crates/dal-auth" }
+dal-storage = { path = "crates/dal-storage" }
+dal-index = { path = "crates/dal-index" }
+
+# ── Async runtime ────────────────────────────────────────────────────────────
+tokio = { version = "1", features = ["full"] }
+
+# ── Web framework ────────────────────────────────────────────────────────────
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = [
+    "cors",
+    "trace",
+    "request-id",
+    "sensitive-headers",
+    "limit",
+    "compression-gzip",
+] }
+
+# ── Serialisation ────────────────────────────────────────────────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+
+# ── Database ─────────────────────────────────────────────────────────────────
+sqlx = { version = "0.8", features = [
+    "postgres",
+    "uuid",
+    "chrono",
+    "runtime-tokio-rustls",
+    "migrate",
+    "json",
+] }
+
+# ── AWS SDK ──────────────────────────────────────────────────────────────────
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+aws-sdk-cognitoidentityprovider = "1"
+aws-sdk-sqs = "1"
+aws-smithy-runtime-api = "1"
+
+# ── Auth / Crypto ────────────────────────────────────────────────────────────
+jsonwebtoken = "10"
+sha2 = "0.10"
+hex = "0.4"
+rand = { version = "0.10" }
+base64 = "0.22"
+
+# ── Types ────────────────────────────────────────────────────────────────────
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+semver = { version = "1", features = ["serde"] }
+bytes = "1"
+url = { version = "2", features = ["serde"] }
+
+# ── HTTP client ──────────────────────────────────────────────────────────────
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls",
+    "multipart",
+] }
+
+# ── Archive ──────────────────────────────────────────────────────────────────
+flate2 = "1"
+tar = "0.4"
+
+# ── Error handling ───────────────────────────────────────────────────────────
+thiserror = "2"
+anyhow = "1"
+
+# ── Logging / Tracing ────────────────────────────────────────────────────────
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# ── Concurrency / Rate-limiting ──────────────────────────────────────────────
+dashmap = "6"
+governor = "0.10"
+
+# ── Environment ──────────────────────────────────────────────────────────────
+dotenvy = "0.15"
+once_cell = "1"
