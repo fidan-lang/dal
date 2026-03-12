@@ -51,17 +51,17 @@
         <form
             action="/search"
             method="GET"
-            class="max-w-xl mx-auto flex gap-2 animate-fade-in-up [animation-delay:225ms]"
+            class="max-w-xl mx-auto flex flex-col min-[540px]:flex-row gap-2 animate-fade-in-up [animation-delay:225ms]"
         >
             <input
                 name="q"
                 type="search"
                 placeholder="Search packages…"
-                class="flex-1 px-4 py-3 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:shadow-[0_0_20px_rgba(132,204,22,0.1)] transition-all duration-200 text-sm"
+                class="w-full min-[540px]:flex-1 min-w-0 px-4 py-3 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:shadow-[0_0_20px_rgba(132,204,22,0.1)] transition-all duration-200 text-sm"
             />
             <button
                 type="submit"
-                class="px-6 py-3 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] active:scale-95 text-white font-medium rounded-[var(--radius-md)] transition-all duration-200 text-sm"
+                class="w-full min-[540px]:w-auto px-6 py-3 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] active:scale-95 text-white font-medium rounded-[var(--radius-md)] transition-all duration-200 text-sm"
             >
                 Search
             </button>

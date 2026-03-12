@@ -34,16 +34,20 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
     <h1 class="text-2xl font-bold text-white mb-6">Search packages</h1>
 
-    <form onsubmit={search} class="flex gap-2 mb-8 max-w-lg">
+    <form
+        onsubmit={search}
+        class="flex flex-col min-[540px]:flex-row gap-2 mb-8 max-w-lg transition-all duration-300"
+    >
         <input
             type="search"
             bind:value={q}
             placeholder="Search packages…"
-            class="flex-1 px-4 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+            class="w-full min-[540px]:flex-1 min-w-0 px-4 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-all duration-300 text-sm"
         />
+
         <button
             type="submit"
-            class="px-5 py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+            class="w-full min-[540px]:w-auto px-5 py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-medium rounded-[var(--radius-md)] transition-all duration-300 text-sm"
         >
             Search
         </button>

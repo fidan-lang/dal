@@ -3,6 +3,7 @@
     import { page } from "$app/state";
     import { auth } from "$lib/api";
     import { currentUser } from "$lib/stores/auth";
+    import { slide } from "svelte/transition";
 
     let mobileOpen = $state(false);
     let dropdownOpen = $state(false);
@@ -141,9 +142,10 @@
 
             <!-- Mobile menu button -->
             <button
-                class="md:hidden p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                class="md:hidden p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors duration-200"
                 onclick={() => (mobileOpen = !mobileOpen)}
                 aria-label="Toggle menu"
+                aria-expanded={mobileOpen}
             >
                 <svg
                     class="w-5 h-5"
@@ -151,21 +153,51 @@
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                 >
-                    {#if mobileOpen}
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12"
-                        />
-                    {:else}
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M4 6h16M4 12h16M4 18h16"
-                        />
-                    {/if}
+                    <!-- top bar: slides down + rotates into first diagonal -->
+                    <line
+                        x1="4"
+                        y1="6"
+                        x2="20"
+                        y2="6"
+                        stroke-linecap="round"
+                        stroke-width="2"
+                        style="
+                            transform-origin: 12px 6px;
+                            transition: transform 300ms cubic-bezier(0.4,0,0.2,1);
+                            transform: {mobileOpen
+                            ? 'translateY(6px) rotate(45deg)'
+                            : 'none'};
+                        "
+                    />
+                    <!-- middle bar: fades out -->
+                    <line
+                        x1="4"
+                        y1="12"
+                        x2="20"
+                        y2="12"
+                        stroke-linecap="round"
+                        stroke-width="2"
+                        style="
+                            transition: opacity 200ms ease;
+                            opacity: {mobileOpen ? 0 : 1};
+                        "
+                    />
+                    <!-- bottom bar: slides up + rotates into second diagonal -->
+                    <line
+                        x1="4"
+                        y1="18"
+                        x2="20"
+                        y2="18"
+                        stroke-linecap="round"
+                        stroke-width="2"
+                        style="
+                            transform-origin: 12px 18px;
+                            transition: transform 300ms cubic-bezier(0.4,0,0.2,1);
+                            transform: {mobileOpen
+                            ? 'translateY(-6px) rotate(-45deg)'
+                            : 'none'};
+                        "
+                    />
                 </svg>
             </button>
         </div>
@@ -174,7 +206,8 @@
     <!-- Mobile menu -->
     {#if mobileOpen}
         <div
-            class="md:hidden border-t border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 flex flex-col gap-3"
+            transition:slide={{ duration: 250, axis: "y" }}
+            class="md:hidden border-t border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 flex flex-col gap-3 overflow-hidden"
         >
             {#each navLinks as link}
                 <a
