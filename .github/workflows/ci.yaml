@@ -65,8 +65,8 @@ jobs:
     environment: aws-deploy
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:
-      server_image: ${{ steps.server-image.outputs.image }}
-      worker_image: ${{ steps.worker-image.outputs.image }}
+      server_digest: ${{ steps.build-server.outputs.digest }}
+      worker_digest: ${{ steps.build-worker.outputs.digest }}
     permissions:
       id-token: write # for OIDC
       contents: read
@@ -104,10 +104,6 @@ jobs:
           cache-from: type=gha,scope=dal-server
           cache-to: type=gha,mode=max,scope=dal-server
 
-      - name: Capture dal-server image reference
-        id: server-image
-        run: echo "image=${{ secrets.ECR_REGISTRY }}/fidan/dal-server@${{ steps.build-server.outputs.digest }}" >> "$GITHUB_OUTPUT"
-
       - name: Build and push dal-worker
         id: build-worker
         uses: docker/build-push-action@v6
@@ -120,10 +116,6 @@ jobs:
             ${{ secrets.ECR_REGISTRY }}/fidan/dal-worker:latest
           cache-from: type=gha,scope=dal-worker
           cache-to: type=gha,mode=max,scope=dal-worker
-
-      - name: Capture dal-worker image reference
-        id: worker-image
-        run: echo "image=${{ secrets.ECR_REGISTRY }}/fidan/dal-worker@${{ steps.build-worker.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy to ECS (main branch only, after Docker push) ────────────────────
   deploy:
@@ -147,6 +139,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          SERVER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-server@${{ needs.docker.outputs.server_digest }}"
+          WORKER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-worker@${{ needs.docker.outputs.worker_digest }}"
+
           SERVER_TASK_DEF_ARN="$(aws ecs describe-services \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --services "${{ secrets.ECS_SERVER_SERVICE }}" \
@@ -158,6 +153,22 @@ jobs:
             --services "${{ secrets.ECS_WORKER_SERVICE }}" \
             --query 'services[0].taskDefinition' \
             --output text)"
+
+          if [ -z "$SERVER_TASK_DEF_ARN" ] || [ "$SERVER_TASK_DEF_ARN" = "None" ]; then
+            echo "Failed to resolve dal-server task definition from ECS service."
+            aws ecs describe-services \
+              --cluster "${{ secrets.ECS_CLUSTER }}" \
+              --services "${{ secrets.ECS_SERVER_SERVICE }}"
+            exit 1
+          fi
+
+          if [ -z "$WORKER_TASK_DEF_ARN" ] || [ "$WORKER_TASK_DEF_ARN" = "None" ]; then
+            echo "Failed to resolve dal-worker task definition from ECS service."
+            aws ecs describe-services \
+              --cluster "${{ secrets.ECS_CLUSTER }}" \
+              --services "${{ secrets.ECS_WORKER_SERVICE }}"
+            exit 1
+          fi
 
           aws ecs describe-task-definition \
             --task-definition "$SERVER_TASK_DEF_ARN" \
@@ -191,7 +202,7 @@ jobs:
 
           jq \
             --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-server" \
-            --arg image "${{ needs.docker.outputs.server_image }}" \
+            --arg image "$SERVER_IMAGE" \
             '.containerDefinitions |= map(
               if (.image | startswith($repo))
               then .image = $image
@@ -201,7 +212,7 @@ jobs:
 
           jq \
             --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-worker" \
-            --arg image "${{ needs.docker.outputs.worker_image }}" \
+            --arg image "$WORKER_IMAGE" \
             '.containerDefinitions |= map(
               if (.image | startswith($repo))
               then .image = $image
@@ -209,11 +220,11 @@ jobs:
               end
             )' worker-task-definition.base.json > worker-task-definition.json
 
-          jq -e --arg image "${{ needs.docker.outputs.server_image }}" \
+          jq -e --arg image "$SERVER_IMAGE" \
             'any(.containerDefinitions[]; .image == $image)' \
             server-task-definition.json >/dev/null
 
-          jq -e --arg image "${{ needs.docker.outputs.worker_image }}" \
+          jq -e --arg image "$WORKER_IMAGE" \
             'any(.containerDefinitions[]; .image == $image)' \
             worker-task-definition.json >/dev/null
 
