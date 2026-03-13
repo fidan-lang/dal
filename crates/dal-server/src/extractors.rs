@@ -29,8 +29,8 @@ impl FromRequestParts<AppState> for AuthUser {
             }
             let hash = dal_auth::hash_token(&token);
             let api_tok = queries::tokens::get_by_hash(&state.db, &hash)
-                .await?
-                .ok_or(DalError::Unauthorized)?;
+                .await?;
+            let api_tok = api_tok.ok_or(DalError::Unauthorized)?;
 
             // Touch last_used_at (fire-and-forget)
             let db = state.db.clone();
@@ -40,8 +40,8 @@ impl FromRequestParts<AppState> for AuthUser {
             });
 
             let user = queries::users::get_by_id(&state.db, api_tok.user_id)
-                .await?
-                .ok_or(DalError::Unauthorized)?;
+                .await?;
+            let user = user.ok_or(DalError::Unauthorized)?;
 
             return Ok(AuthUser(user));
         }

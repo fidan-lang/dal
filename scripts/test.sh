@@ -23,7 +23,7 @@ fi
 EXTRA_ARGS=""
 if [[ "${1:-}" == "--with-cognito" ]]; then
     echo "==> Starting cognito-local..."
-    npx --yes @jagreehal/cognito-local &
+    npx --yes cognito-local &
     COGNITO_PID=$!
     export TEST_COGNITO_ENDPOINT_URL=http://localhost:9229
     sleep 2

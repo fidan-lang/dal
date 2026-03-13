@@ -20,7 +20,7 @@ if not exist .env.test (
 set EXTRA_ARGS=
 if "%1"=="--with-cognito" (
     echo ==^> Starting cognito-local...
-    start /b npx --yes @jagreehal/cognito-local
+    start /b npx --yes cognito-local
     timeout /t 3 /nobreak >nul
     set TEST_COGNITO_ENDPOINT_URL=http://localhost:9229
     set EXTRA_ARGS=-- --include-ignored

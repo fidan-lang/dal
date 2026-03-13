@@ -6,8 +6,8 @@
 
 #![allow(dead_code)]
 
-use axum::body::{to_bytes, Body};
-use axum::http::{Request, Response, StatusCode};
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, Response, StatusCode};
 use dal_server::{app::build_router, config::Config, state::AppState};
 use tower::ServiceExt;
 
@@ -62,9 +62,7 @@ impl TestApp {
 
         let cfg = test_config();
         let state = AppState::build(&cfg).await.unwrap_or_else(|e| {
-            panic!(
-                "TestApp::spawn failed — is docker-compose.test.yml running?\n\nError: {e:#}"
-            )
+            panic!("TestApp::spawn failed — is docker-compose.test.yml running?\n\nError: {e:#}")
         });
         TestApp {
             router: build_router(state),
@@ -82,13 +80,29 @@ impl TestApp {
     }
 
     pub async fn post_json(&self, uri: &str, body: serde_json::Value) -> Response<Body> {
+        self.request_json(Method::POST, uri, body, None).await
+    }
+
+    pub async fn request_json(
+        &self,
+        method: Method,
+        uri: &str,
+        body: serde_json::Value,
+        bearer_token: Option<&str>,
+    ) -> Response<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json");
+
+        if let Some(token) = bearer_token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+
         self.router
             .clone()
             .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(uri)
-                    .header("content-type", "application/json")
+                builder
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
             )

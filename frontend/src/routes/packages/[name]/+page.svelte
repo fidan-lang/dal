@@ -13,7 +13,6 @@
     let { data } = $props();
 
     let tab = $state<"readme" | "versions" | "owners">("readme");
-    let readme = $state("");
     let ownersList = $state<Awaited<ReturnType<typeof owners.list>>>([]);
     let yankError = $state("");
 
@@ -22,11 +21,11 @@
         data.versions.find((v: PackageVersion) => !v.yanked) ??
             data.versions[0],
     );
+    let readme = $derived(
+        renderMarkdown(data.pkg.readme ?? latestVersion?.readme ?? ""),
+    );
 
     onMount(async () => {
-        if (latestVersion?.readme) {
-            readme = renderMarkdown(latestVersion.readme);
-        }
         try {
             ownersList = await owners.list(fetch, data.pkg.name);
         } catch {
@@ -65,6 +64,14 @@
         !!$currentUser &&
             ownersList.some((o) => o.username === $currentUser?.username),
     );
+
+    function hostnameFor(url: string): string {
+        try {
+            return new URL(url).hostname;
+        } catch {
+            return url;
+        }
+    }
 </script>
 
 <svelte:head>
@@ -278,7 +285,7 @@
                             rel="noopener noreferrer"
                             class="text-[var(--color-primary)] truncate hover:underline"
                         >
-                            {new URL(data.pkg.homepage_url).hostname}
+                            {hostnameFor(data.pkg.homepage_url)}
                         </a>
                     </div>
                 {/if}
@@ -293,7 +300,7 @@
                             rel="noopener noreferrer"
                             class="text-[var(--color-primary)] truncate hover:underline"
                         >
-                            {new URL(data.pkg.repository_url).hostname}
+                            {hostnameFor(data.pkg.repository_url)}
                         </a>
                     </div>
                 {/if}

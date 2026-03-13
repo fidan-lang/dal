@@ -3,7 +3,7 @@
 # Invoked automatically by LocalStack on container startup.
 set -euo pipefail
 
-AWS_OPTS="--endpoint-url http://localhost:4566 --region eu-central-1 --no-cli-pager"
+AWS_OPTS="--endpoint-url http://localhost:4566 --region eu-central-1"
 
 echo "[localstack-test] Creating S3 bucket: dal-test"
 aws $AWS_OPTS s3 mb s3://dal-test || true

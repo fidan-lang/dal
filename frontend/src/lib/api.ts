@@ -38,6 +38,7 @@ export interface Package {
   homepage_url: string | null;
   repository_url: string | null;
   license: string | null;
+  readme: string | null;
   keywords: string[];
   categories: string[];
   downloads: number;
@@ -202,6 +203,7 @@ function normalizePackage(raw: unknown): Package {
     repository_url:
       asNullableString(pkg.repository_url) ?? asNullableString(pkg.repository),
     license: asNullableString(pkg.license),
+    readme: asNullableString(pkg.readme),
     keywords: asStringArray(pkg.keywords),
     categories: asStringArray(pkg.categories),
     downloads: asNumber(pkg.downloads),

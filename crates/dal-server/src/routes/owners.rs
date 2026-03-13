@@ -112,13 +112,27 @@ async fn remove_owner(
 
     // Prevent removing the last owner
     let owners = queries::packages::list_owners(&state.db, pkg.id).await?;
-    if owners.len() <= 1 {
+    let owner_count = owners.iter().filter(|owner| owner.role == "owner").count();
+    let target_owner = owners.iter().find(|owner| owner.user_id == target.id);
+
+    if target_owner.is_none() {
+        return Err(DalError::Validation(
+            "user is not a member of this package".into(),
+        ));
+    }
+
+    if target_owner.is_some_and(|owner| owner.role == "owner") && owner_count <= 1 {
         return Err(DalError::Validation(
             "cannot remove the last owner of a package".into(),
         ));
     }
 
-    queries::packages::remove_owner(&state.db, pkg.id, target.id).await?;
+    let removed = queries::packages::remove_owner(&state.db, pkg.id, target.id).await?;
+    if !removed {
+        return Err(DalError::Validation(
+            "user is not a member of this package".into(),
+        ));
+    }
 
     let _ = queries::audit::record(
         &state.db,

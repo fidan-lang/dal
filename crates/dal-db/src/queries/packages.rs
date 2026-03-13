@@ -212,9 +212,24 @@ pub async fn list_owners(pool: &PgPool, package_id: Uuid) -> DalResult<Vec<Packa
     Ok(owners)
 }
 
-pub async fn is_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
+pub async fn is_member(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(SELECT 1 FROM package_owners WHERE package_id = $1 AND user_id = $2)",
+    )
+    .bind(package_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn is_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
+    let row: (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM package_owners
+            WHERE package_id = $1 AND user_id = $2 AND role = 'owner'
+        )",
     )
     .bind(package_id)
     .bind(user_id)

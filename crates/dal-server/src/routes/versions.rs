@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::{Multipart, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{get, post, put},
     Json, Router,
 };
@@ -53,7 +53,7 @@ async fn get_version(
 async fn download(
     State(state): State<AppState>,
     Path((name, version)): Path<(String, String)>,
-    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
 ) -> Result<axum::response::Redirect, DalError> {
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
@@ -72,10 +72,20 @@ async fn download(
 
     // Record download asynchronously
     let db = state.db.clone();
-    let ip_hash = dal_auth::api_token::hash_ip(&addr.ip().to_string());
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let ip_hash = dal_auth::api_token::hash_ip(client_ip);
     let ver_id = ver.id;
     let pkg_id = pkg.id;
-    let ua = None::<String>; // user-agent could be extracted from headers if needed
+    let ua = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
     tokio::spawn(async move {
         let _ = queries::versions::increment_downloads(&db, ver_id).await;
         let _ = queries::packages::increment_downloads(&db, pkg_id).await;
@@ -136,7 +146,7 @@ async fn publish(
     let pkg = match queries::packages::get_by_name(&state.db, &name).await? {
         Some(p) => {
             // Ownership check
-            if !queries::packages::is_owner(&state.db, p.id, user.id).await? {
+            if !queries::packages::is_member(&state.db, p.id, user.id).await? {
                 return Err(DalError::Forbidden);
             }
             p
@@ -243,7 +253,7 @@ async fn yank(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_owner(&state.db, pkg.id, user.id).await? {
+    if !queries::packages::is_member(&state.db, pkg.id, user.id).await? {
         return Err(DalError::Forbidden);
     }
 
@@ -264,7 +274,7 @@ async fn unyank(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_owner(&state.db, pkg.id, user.id).await? {
+    if !queries::packages::is_member(&state.db, pkg.id, user.id).await? {
         return Err(DalError::Forbidden);
     }
 

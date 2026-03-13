@@ -1,11 +1,17 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Query parameters for paginated list endpoints.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PageParams {
-    #[serde(default = "PageParams::default_page")]
+    #[serde(
+        default = "PageParams::default_page",
+        deserialize_with = "deserialize_query_u32"
+    )]
     pub page: u32,
-    #[serde(default = "PageParams::default_per_page")]
+    #[serde(
+        default = "PageParams::default_per_page",
+        deserialize_with = "deserialize_query_u32"
+    )]
     pub per_page: u32,
 }
 
@@ -50,5 +56,22 @@ impl<T> Page<T> {
         let (page, per_page) = params.validated();
         let pages = ((total as f64) / (per_page as f64)).ceil() as u32;
         Self { items, page, per_page, total, pages }
+    }
+}
+
+fn deserialize_query_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum QueryNumber {
+        Number(u32),
+        Text(String),
+    }
+
+    match QueryNumber::deserialize(deserializer)? {
+        QueryNumber::Number(value) => Ok(value),
+        QueryNumber::Text(value) => value.parse::<u32>().map_err(serde::de::Error::custom),
     }
 }

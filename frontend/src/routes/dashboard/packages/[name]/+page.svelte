@@ -13,6 +13,7 @@
     let error = $state('');
     let success = $state('');
     let busyAction = $state<string | null>(null);
+    let canManageOwners = $derived(data.currentRole === 'owner');
 
     $effect(() => {
         ownersList = data.owners;
@@ -46,9 +47,9 @@
             ownersList = await ownersApi.list(fetch, data.pkg.name);
             inviteUsername = '';
             inviteRole = 'collaborator';
-            finish('Owner invited.');
+            finish('Member added.');
         } catch (err) {
-            fail(err, 'Failed to invite owner.');
+            fail(err, 'Failed to add member.');
         }
     }
 
@@ -184,11 +185,11 @@
     <section class="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
         <div class="space-y-4">
             <div>
-                <h2 class="text-lg font-semibold text-white">Owners</h2>
-                <p class="text-sm text-[var(--color-text-muted)] mt-1">
-                    Add collaborators and manage package ownership.
-                </p>
-            </div>
+            <h2 class="text-lg font-semibold text-white">Members</h2>
+            <p class="text-sm text-[var(--color-text-muted)] mt-1">
+                    Package members can publish and manage versions.
+            </p>
+        </div>
 
             <div class="space-y-3">
                 {#each ownersList as owner}
@@ -208,7 +209,7 @@
                                 @{owner.username} · {owner.role} · added {timeAgo(owner.added_at)}
                             </p>
                         </div>
-                        {#if ownersList.length > 1}
+                        {#if canManageOwners && ownersList.length > 1}
                             <button
                                 type="button"
                                 disabled={busyAction === `remove:${owner.username}`}
@@ -224,59 +225,73 @@
         </div>
 
         <div class="space-y-8">
-            <section
-                class="p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
-            >
-                <h3 class="text-base font-semibold text-white">Invite owner</h3>
-                <form onsubmit={inviteOwner} class="mt-4 space-y-3">
-                    <input
-                        type="text"
-                        bind:value={inviteUsername}
-                        required
-                        placeholder="Username"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
-                    />
-                    <select
-                        bind:value={inviteRole}
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
-                    >
-                        <option value="collaborator">Collaborator</option>
-                        <option value="owner">Owner</option>
-                    </select>
-                    <button
-                        type="submit"
-                        disabled={busyAction === 'invite'}
-                        class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white text-sm font-medium rounded-[var(--radius-md)] transition-colors"
-                    >
-                        {busyAction === 'invite' ? 'Inviting…' : 'Invite'}
-                    </button>
-                </form>
-            </section>
+            {#if canManageOwners}
+                <section
+                    class="p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
+                >
+                    <h3 class="text-base font-semibold text-white">Add member</h3>
+                    <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+                        Owners can add collaborators or promote another owner.
+                    </p>
+                    <form onsubmit={inviteOwner} class="mt-4 space-y-3">
+                        <input
+                            type="text"
+                            bind:value={inviteUsername}
+                            required
+                            placeholder="Username"
+                            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
+                        />
+                        <select
+                            bind:value={inviteRole}
+                            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
+                        >
+                            <option value="collaborator">Collaborator</option>
+                            <option value="owner">Owner</option>
+                        </select>
+                        <button
+                            type="submit"
+                            disabled={busyAction === 'invite'}
+                            class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white text-sm font-medium rounded-[var(--radius-md)] transition-colors"
+                        >
+                            {busyAction === 'invite' ? 'Adding…' : 'Add member'}
+                        </button>
+                    </form>
+                </section>
 
-            <section
-                class="p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
-            >
-                <h3 class="text-base font-semibold text-white">Transfer ownership</h3>
-                <p class="mt-2 text-sm text-[var(--color-text-muted)]">
-                    Promote another user and demote yourself to collaborator.
-                </p>
-                <form onsubmit={transferOwnership} class="mt-4 space-y-3">
-                    <input
-                        type="text"
-                        bind:value={transferUsername}
-                        required
-                        placeholder="Recipient username"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
-                    />
-                    <button
-                        type="submit"
-                        disabled={busyAction === 'transfer'}
-                        class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white text-sm font-medium rounded-[var(--radius-md)] transition-colors"
-                    >
-                        {busyAction === 'transfer' ? 'Transferring…' : 'Transfer ownership'}
-                    </button>
-                </form>
-            </section>
+                <section
+                    class="p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
+                >
+                    <h3 class="text-base font-semibold text-white">Transfer ownership</h3>
+                    <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+                        Promote another user and demote yourself to collaborator.
+                    </p>
+                    <form onsubmit={transferOwnership} class="mt-4 space-y-3">
+                        <input
+                            type="text"
+                            bind:value={transferUsername}
+                            required
+                            placeholder="Recipient username"
+                            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none text-sm"
+                        />
+                        <button
+                            type="submit"
+                            disabled={busyAction === 'transfer'}
+                            class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white text-sm font-medium rounded-[var(--radius-md)] transition-colors"
+                        >
+                            {busyAction === 'transfer' ? 'Transferring…' : 'Transfer ownership'}
+                        </button>
+                    </form>
+                </section>
+            {:else}
+                <section
+                    class="p-5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-lg)]"
+                >
+                    <h3 class="text-base font-semibold text-white">Collaborator access</h3>
+                    <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+                        You can publish and manage versions, but only owners can change package membership.
+                    </p>
+                </section>
+            {/if}
         </div>
     </section>
 </div>
