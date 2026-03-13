@@ -165,14 +165,16 @@ async fn publish(
             let pkg_id = Uuid::new_v4();
             let pkg = queries::packages::create(
                 &state.db,
-                pkg_id,
-                &manifest.package.name,
-                manifest.package.description.as_deref(),
-                manifest.package.repository.as_deref(),
-                manifest.package.homepage.as_deref(),
-                manifest.package.license.as_deref(),
-                &manifest.package.keywords,
-                &manifest.package.categories,
+                queries::packages::NewPackage {
+                    id: pkg_id,
+                    name: &manifest.package.name,
+                    description: manifest.package.description.as_deref(),
+                    repository: manifest.package.repository.as_deref(),
+                    homepage: manifest.package.homepage.as_deref(),
+                    license: manifest.package.license.as_deref(),
+                    keywords: &manifest.package.keywords,
+                    categories: &manifest.package.categories,
+                },
             )
             .await?;
 
@@ -199,29 +201,33 @@ async fn publish(
 
     queries::versions::create(
         &state.db,
-        ver_id,
-        pkg.id,
-        &version_str,
-        &info.checksum,
-        info.size_bytes,
-        &s3_key,
-        readme.as_deref(),
-        serde_json::to_value(&manifest).unwrap_or_default(),
-        user.id,
+        queries::versions::NewPackageVersion {
+            id: ver_id,
+            package_id: pkg.id,
+            version: &version_str,
+            checksum: &info.checksum,
+            size_bytes: info.size_bytes,
+            s3_key: &s3_key,
+            readme: readme.as_deref(),
+            manifest: serde_json::to_value(&manifest).unwrap_or_default(),
+            published_by: user.id,
+        },
     )
     .await?;
 
     // Update package metadata from latest manifest
     queries::packages::update_metadata(
         &state.db,
-        pkg.id,
-        manifest.package.description.as_deref(),
-        manifest.package.repository.as_deref(),
-        manifest.package.homepage.as_deref(),
-        manifest.package.license.as_deref(),
-        readme.as_deref(),
-        &manifest.package.keywords,
-        &manifest.package.categories,
+        queries::packages::PackageMetadataUpdate {
+            id: pkg.id,
+            description: manifest.package.description.as_deref(),
+            repository: manifest.package.repository.as_deref(),
+            homepage: manifest.package.homepage.as_deref(),
+            license: manifest.package.license.as_deref(),
+            readme: readme.as_deref(),
+            keywords: &manifest.package.keywords,
+            categories: &manifest.package.categories,
+        },
     )
     .await?;
 

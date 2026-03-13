@@ -3,17 +3,21 @@ use dal_common::Result as DalResult;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+pub struct NewPackageVersion<'a> {
+    pub id: Uuid,
+    pub package_id: Uuid,
+    pub version: &'a str,
+    pub checksum: &'a str,
+    pub size_bytes: i64,
+    pub s3_key: &'a str,
+    pub readme: Option<&'a str>,
+    pub manifest: serde_json::Value,
+    pub published_by: Uuid,
+}
+
 pub async fn create(
     pool: &PgPool,
-    id: Uuid,
-    package_id: Uuid,
-    version: &str,
-    checksum: &str,
-    size_bytes: i64,
-    s3_key: &str,
-    readme: Option<&str>,
-    manifest: serde_json::Value,
-    published_by: Uuid,
+    new_version: NewPackageVersion<'_>,
 ) -> DalResult<PackageVersion> {
     let v = sqlx::query_as::<_, PackageVersion>(
         "INSERT INTO package_versions
@@ -22,15 +26,15 @@ pub async fn create(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
          RETURNING *",
     )
-    .bind(id)
-    .bind(package_id)
-    .bind(version)
-    .bind(checksum)
-    .bind(size_bytes)
-    .bind(s3_key)
-    .bind(readme)
-    .bind(manifest)
-    .bind(published_by)
+    .bind(new_version.id)
+    .bind(new_version.package_id)
+    .bind(new_version.version)
+    .bind(new_version.checksum)
+    .bind(new_version.size_bytes)
+    .bind(new_version.s3_key)
+    .bind(new_version.readme)
+    .bind(new_version.manifest)
+    .bind(new_version.published_by)
     .fetch_one(pool)
     .await?;
     Ok(v)

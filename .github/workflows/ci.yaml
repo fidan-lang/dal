@@ -8,8 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  AWS_REGION: ${{ vars.AWS_REGION || 'eu-central-1' }}
-  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
 
 jobs:
   # ─── Test + Lint ────────────────────────────────────────────────────────────
@@ -64,7 +62,11 @@ jobs:
     name: Build & Push Docker
     needs: test
     runs-on: ubuntu-latest
+    environment: aws-deploy
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      server_image: ${{ steps.server-image.outputs.image }}
+      worker_image: ${{ steps.worker-image.outputs.image }}
     permissions:
       id-token: write # for OIDC
       contents: read
@@ -76,7 +78,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -90,34 +92,45 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push dal-server
+        id: build-server
         uses: docker/build-push-action@v6
         with:
           context: .
           target: server
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/dal-server:${{ steps.vars.outputs.tag }}
-            ${{ env.ECR_REGISTRY }}/dal-server:latest
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-server:${{ steps.vars.outputs.tag }}
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-server:latest
           cache-from: type=gha,scope=dal-server
           cache-to: type=gha,mode=max,scope=dal-server
 
+      - name: Capture dal-server image reference
+        id: server-image
+        run: echo "image=${{ secrets.ECR_REGISTRY }}/fidan/dal-server@${{ steps.build-server.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push dal-worker
+        id: build-worker
         uses: docker/build-push-action@v6
         with:
           context: .
           target: worker
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/dal-worker:${{ steps.vars.outputs.tag }}
-            ${{ env.ECR_REGISTRY }}/dal-worker:latest
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-worker:${{ steps.vars.outputs.tag }}
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-worker:latest
           cache-from: type=gha,scope=dal-worker
           cache-to: type=gha,mode=max,scope=dal-worker
+
+      - name: Capture dal-worker image reference
+        id: worker-image
+        run: echo "image=${{ secrets.ECR_REGISTRY }}/fidan/dal-worker@${{ steps.build-worker.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy to ECS (main branch only, after Docker push) ────────────────────
   deploy:
     name: Deploy to ECS
     needs: docker
     runs-on: ubuntu-latest
+    environment: aws-deploy
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       id-token: write
@@ -128,38 +141,124 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Set image tag
-        id: vars
-        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy dal-server to ECS
+      - name: Prepare ECS task definitions
         run: |
+          set -euo pipefail
+
+          SERVER_TASK_DEF_ARN="$(aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)"
+
+          WORKER_TASK_DEF_ARN="$(aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)"
+
+          aws ecs describe-task-definition \
+            --task-definition "$SERVER_TASK_DEF_ARN" \
+            --query 'taskDefinition' \
+            > server-task-definition.raw.json
+
+          aws ecs describe-task-definition \
+            --task-definition "$WORKER_TASK_DEF_ARN" \
+            --query 'taskDefinition' \
+            > worker-task-definition.raw.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' server-task-definition.raw.json > server-task-definition.base.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' worker-task-definition.raw.json > worker-task-definition.base.json
+
+          jq \
+            --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-server" \
+            --arg image "${{ needs.docker.outputs.server_image }}" \
+            '.containerDefinitions |= map(
+              if (.image | startswith($repo))
+              then .image = $image
+              else .
+              end
+            )' server-task-definition.base.json > server-task-definition.json
+
+          jq \
+            --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-worker" \
+            --arg image "${{ needs.docker.outputs.worker_image }}" \
+            '.containerDefinitions |= map(
+              if (.image | startswith($repo))
+              then .image = $image
+              else .
+              end
+            )' worker-task-definition.base.json > worker-task-definition.json
+
+          jq -e --arg image "${{ needs.docker.outputs.server_image }}" \
+            'any(.containerDefinitions[]; .image == $image)' \
+            server-task-definition.json >/dev/null
+
+          jq -e --arg image "${{ needs.docker.outputs.worker_image }}" \
+            'any(.containerDefinitions[]; .image == $image)' \
+            worker-task-definition.json >/dev/null
+
+      - name: Register and deploy dal-server task definition
+        run: |
+          set -euo pipefail
+
+          SERVER_TASK_DEF_ARN="$(aws ecs register-task-definition \
+            --cli-input-json file://server-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
           aws ecs update-service \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --service "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --task-definition "$SERVER_TASK_DEF_ARN" \
             --force-new-deployment \
-            --region "${{ env.AWS_REGION }}"
+            --region "${{ vars.AWS_REGION }}"
 
-      - name: Deploy dal-worker to ECS
+      - name: Register and deploy dal-worker task definition
         run: |
+          set -euo pipefail
+
+          WORKER_TASK_DEF_ARN="$(aws ecs register-task-definition \
+            --cli-input-json file://worker-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
           aws ecs update-service \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --service "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --task-definition "$WORKER_TASK_DEF_ARN" \
             --force-new-deployment \
-            --region "${{ env.AWS_REGION }}"
+            --region "${{ vars.AWS_REGION }}"
 
       - name: Wait for dal-server stability
         run: |
           aws ecs wait services-stable \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --services "${{ secrets.ECS_SERVER_SERVICE }}" \
-            --region "${{ env.AWS_REGION }}"
+            --region "${{ vars.AWS_REGION }}"
 
       - name: Wait for dal-worker stability
         run: |
           aws ecs wait services-stable \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --services "${{ secrets.ECS_WORKER_SERVICE }}" \
-            --region "${{ env.AWS_REGION }}"
+            --region "${{ vars.AWS_REGION }}"

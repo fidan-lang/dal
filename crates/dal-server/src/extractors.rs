@@ -23,10 +23,10 @@ pub struct AuthActor {
 
 impl AuthActor {
     pub fn require_scope(&self, scope: &str) -> Result<(), DalError> {
-        if let Some(token) = &self.api_token {
-            if !has_scope(&token.scopes, scope) {
-                return Err(DalError::Forbidden);
-            }
+        if let Some(token) = &self.api_token
+            && !has_scope(&token.scopes, scope)
+        {
+            return Err(DalError::Forbidden);
         }
         Ok(())
     }

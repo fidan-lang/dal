@@ -3,6 +3,7 @@ mod validate;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use url::Url;
 
 pub use validate::validate_package_name;
@@ -84,16 +85,7 @@ impl Manifest {
     /// Parse a `dal.toml` byte slice.
     pub fn from_toml(bytes: &[u8]) -> Result<Self, ManifestError> {
         let text = std::str::from_utf8(bytes).map_err(|_| ManifestError::NotUtf8)?;
-        let m: Self = toml::from_str(text)?;
-        m.validate()?;
-        Ok(m)
-    }
-
-    /// Parse a `dal.toml` string.
-    pub fn from_str(text: &str) -> Result<Self, ManifestError> {
-        let m: Self = toml::from_str(text)?;
-        m.validate()?;
-        Ok(m)
+        text.parse()
     }
 
     /// Returns the parsed SemVer version.
@@ -148,6 +140,16 @@ impl Manifest {
         }
 
         Ok(())
+    }
+}
+
+impl FromStr for Manifest {
+    type Err = ManifestError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let manifest: Self = toml::from_str(text)?;
+        manifest.validate()?;
+        Ok(manifest)
     }
 }
 

@@ -84,14 +84,16 @@ async fn collaborator_cannot_manage_ownership() {
 
     queries::packages::create(
         &db,
-        package_id,
-        &package_name,
-        Some("permission test package"),
-        None,
-        None,
-        None,
-        &[],
-        &[],
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("permission test package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
     )
     .await
     .unwrap();
@@ -178,14 +180,16 @@ async fn collaborator_does_not_count_as_last_owner() {
 
     queries::packages::create(
         &db,
-        package_id,
-        &package_name,
-        Some("last owner test package"),
-        None,
-        None,
-        None,
-        &[],
-        &[],
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("last owner test package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
     )
     .await
     .unwrap();
@@ -264,14 +268,16 @@ async fn owner_invites_are_pending_until_accepted() {
     .unwrap();
     queries::packages::create(
         &db,
-        package_id,
-        &package_name,
-        Some("invite lifecycle package"),
-        None,
-        None,
-        None,
-        &[],
-        &[],
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("invite lifecycle package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
     )
     .await
     .unwrap();
@@ -388,14 +394,16 @@ async fn owner_token_without_owner_scope_cannot_manage_ownership() {
     .unwrap();
     queries::packages::create(
         &db,
-        package_id,
-        &package_name,
-        Some("owner scope package"),
-        None,
-        None,
-        None,
-        &[],
-        &[],
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("owner scope package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
     )
     .await
     .unwrap();

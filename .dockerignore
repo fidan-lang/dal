@@ -1,0 +1,17 @@
+target
+frontend
+LOCAL
+.git
+.github
+.vscode
+.cognito
+node_modules
+**/node_modules
+**/.svelte-kit
+**/dist
+**/playwright-report
+**/test-results
+.env
+.env.*
+docker-compose.yml
+docker-compose.test.yml

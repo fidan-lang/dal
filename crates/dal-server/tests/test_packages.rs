@@ -128,14 +128,16 @@ async fn yank_requires_yank_scope_for_api_tokens() {
     .unwrap();
     queries::packages::create(
         &db,
-        package_id,
-        &package_name,
-        Some("scope yank package"),
-        None,
-        None,
-        None,
-        &[],
-        &[],
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("scope yank package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
     )
     .await
     .unwrap();
@@ -144,15 +146,17 @@ async fn yank_requires_yank_scope_for_api_tokens() {
         .unwrap();
     queries::versions::create(
         &db,
-        version_id,
-        package_id,
-        "1.0.0",
-        "deadbeef",
-        123,
-        "packages/test/1.0.0.tar.gz",
-        Some("# test"),
-        json!({ "package": { "name": package_name, "version": "1.0.0" } }),
-        user_id,
+        queries::versions::NewPackageVersion {
+            id: version_id,
+            package_id,
+            version: "1.0.0",
+            checksum: "deadbeef",
+            size_bytes: 123,
+            s3_key: "packages/test/1.0.0.tar.gz",
+            readme: Some("# test"),
+            manifest: json!({ "package": { "name": package_name, "version": "1.0.0" } }),
+            published_by: user_id,
+        },
     )
     .await
     .unwrap();

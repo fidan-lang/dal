@@ -3,31 +3,43 @@ use dal_common::Result as DalResult;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub async fn create(
-    pool: &PgPool,
-    id: Uuid,
-    name: &str,
-    description: Option<&str>,
-    repository: Option<&str>,
-    homepage: Option<&str>,
-    license: Option<&str>,
-    keywords: &[String],
-    categories: &[String],
-) -> DalResult<Package> {
+pub struct NewPackage<'a> {
+    pub id: Uuid,
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub repository: Option<&'a str>,
+    pub homepage: Option<&'a str>,
+    pub license: Option<&'a str>,
+    pub keywords: &'a [String],
+    pub categories: &'a [String],
+}
+
+pub struct PackageMetadataUpdate<'a> {
+    pub id: Uuid,
+    pub description: Option<&'a str>,
+    pub repository: Option<&'a str>,
+    pub homepage: Option<&'a str>,
+    pub license: Option<&'a str>,
+    pub readme: Option<&'a str>,
+    pub keywords: &'a [String],
+    pub categories: &'a [String],
+}
+
+pub async fn create(pool: &PgPool, new_package: NewPackage<'_>) -> DalResult<Package> {
     let pkg = sqlx::query_as::<_, Package>(
         "INSERT INTO packages
              (id, name, description, repository, homepage, license, keywords, categories)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
          RETURNING *",
     )
-    .bind(id)
-    .bind(name)
-    .bind(description)
-    .bind(repository)
-    .bind(homepage)
-    .bind(license)
-    .bind(serde_json::to_value(keywords).unwrap())
-    .bind(serde_json::to_value(categories).unwrap())
+    .bind(new_package.id)
+    .bind(new_package.name)
+    .bind(new_package.description)
+    .bind(new_package.repository)
+    .bind(new_package.homepage)
+    .bind(new_package.license)
+    .bind(serde_json::to_value(new_package.keywords).unwrap())
+    .bind(serde_json::to_value(new_package.categories).unwrap())
     .fetch_one(pool)
     .await?;
     Ok(pkg)
@@ -60,14 +72,7 @@ pub async fn name_exists(pool: &PgPool, name: &str) -> DalResult<bool> {
 
 pub async fn update_metadata(
     pool: &PgPool,
-    id: Uuid,
-    description: Option<&str>,
-    repository: Option<&str>,
-    homepage: Option<&str>,
-    license: Option<&str>,
-    readme: Option<&str>,
-    keywords: &[String],
-    categories: &[String],
+    update: PackageMetadataUpdate<'_>,
 ) -> DalResult<Package> {
     let pkg = sqlx::query_as::<_, Package>(
         "UPDATE packages SET
@@ -82,14 +87,14 @@ pub async fn update_metadata(
          WHERE id = $1
          RETURNING *",
     )
-    .bind(id)
-    .bind(description)
-    .bind(repository)
-    .bind(homepage)
-    .bind(license)
-    .bind(readme)
-    .bind(serde_json::to_value(keywords).unwrap())
-    .bind(serde_json::to_value(categories).unwrap())
+    .bind(update.id)
+    .bind(update.description)
+    .bind(update.repository)
+    .bind(update.homepage)
+    .bind(update.license)
+    .bind(update.readme)
+    .bind(serde_json::to_value(update.keywords).unwrap())
+    .bind(serde_json::to_value(update.categories).unwrap())
     .fetch_one(pool)
     .await?;
     Ok(pkg)
