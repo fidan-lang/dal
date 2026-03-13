@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -72,9 +72,9 @@ impl DalError {
         match self {
             Self::Unauthorized | Self::InvalidApiToken => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
-            Self::PackageNotFound(_)
-            | Self::VersionNotFound(_, _)
-            | Self::UserNotFound(_) => StatusCode::NOT_FOUND,
+            Self::PackageNotFound(_) | Self::VersionNotFound(_, _) | Self::UserNotFound(_) => {
+                StatusCode::NOT_FOUND
+            }
             Self::PackageNameTaken(_)
             | Self::VersionAlreadyExists(_, _)
             | Self::UsernameTaken(_)

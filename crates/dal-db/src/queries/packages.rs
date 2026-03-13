@@ -34,12 +34,10 @@ pub async fn create(
 }
 
 pub async fn get_by_name(pool: &PgPool, name: &str) -> DalResult<Option<Package>> {
-    let pkg = sqlx::query_as::<_, Package>(
-        "SELECT * FROM packages WHERE lower(name) = lower($1)",
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await?;
+    let pkg = sqlx::query_as::<_, Package>("SELECT * FROM packages WHERE lower(name) = lower($1)")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
     Ok(pkg)
 }
 
@@ -52,12 +50,11 @@ pub async fn get_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<Package>> {
 }
 
 pub async fn name_exists(pool: &PgPool, name: &str) -> DalResult<bool> {
-    let row: (bool,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM packages WHERE lower(name) = lower($1))",
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await?;
+    let row: (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM packages WHERE lower(name) = lower($1))")
+            .bind(name)
+            .fetch_one(pool)
+            .await?;
     Ok(row.0)
 }
 
@@ -146,10 +143,9 @@ pub async fn search(
 
 /// List all packages, sorted by download count descending.
 pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> DalResult<(Vec<PackageSummary>, i64)> {
-    let total: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM packages")
-            .fetch_one(pool)
-            .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM packages")
+        .fetch_one(pool)
+        .await?;
 
     let items = sqlx::query_as::<_, PackageSummary>(
         "SELECT p.id, p.name, p.description, p.license, p.downloads,
@@ -193,12 +189,11 @@ pub async fn add_owner(
 }
 
 pub async fn remove_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
-    let res =
-        sqlx::query("DELETE FROM package_owners WHERE package_id = $1 AND user_id = $2")
-            .bind(package_id)
-            .bind(user_id)
-            .execute(pool)
-            .await?;
+    let res = sqlx::query("DELETE FROM package_owners WHERE package_id = $1 AND user_id = $2")
+        .bind(package_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(res.rows_affected() > 0)
 }
 
@@ -245,12 +240,10 @@ pub async fn list_by_owner(
     limit: i64,
     offset: i64,
 ) -> DalResult<(Vec<PackageSummary>, i64)> {
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM package_owners WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM package_owners WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
 
     let items = sqlx::query_as::<_, PackageSummary>(
         "SELECT p.id, p.name, p.description, p.license, p.downloads,

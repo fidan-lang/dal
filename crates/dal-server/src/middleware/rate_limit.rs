@@ -1,16 +1,11 @@
-use std::{
-    net::IpAddr,
-    num::NonZeroU32,
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::IpAddr, num::NonZeroU32, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 use governor::{
+    Quota, RateLimiter as GovRateLimiter,
     clock::DefaultClock,
     middleware::NoOpMiddleware,
     state::{InMemoryState, NotKeyed},
-    Quota, RateLimiter as GovRateLimiter,
 };
 
 type Limiter = GovRateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
@@ -24,7 +19,9 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new() -> Self {
-        Self { map: DashMap::new() }
+        Self {
+            map: DashMap::new(),
+        }
     }
 
     /// Returns `true` if the request should be allowed, `false` if limited.

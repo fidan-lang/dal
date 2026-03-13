@@ -108,6 +108,35 @@ npm run dev
 
 The frontend dev server starts at ``http://localhost:5173`` and proxies API calls to ``http://localhost:8080``.
 
+### 7. Run the test stack
+
+For the full backend integration suite, use the provided test scripts instead of bare
+`cargo test` so Postgres, LocalStack, and Cognito-local are started consistently.
+
+```bash
+./scripts/test.sh
+./scripts/test.sh --with-cognito
+```
+
+On Windows:
+
+```powershell
+scripts\test.bat
+scripts\test.bat --with-cognito
+```
+
+### 8. Verify worker-delivered emails locally
+
+For local worker testing without calling the real Mailjet API, use the helper
+scripts in `LOCAL/`:
+
+```powershell
+LOCAL\start-mail-sink.ps1
+LOCAL\start-dal-worker.ps1
+```
+
+The sink writes captured Mailjet-compatible requests to `LOCAL/mail-sink.log`.
+
 ---
 
 ## API Reference

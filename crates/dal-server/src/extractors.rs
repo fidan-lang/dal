@@ -1,10 +1,14 @@
 use axum::{
     extract::FromRequestParts,
-    http::{header, request::Parts, HeaderMap},
+    http::{HeaderMap, header, request::Parts},
 };
 use dal_auth::Claims;
+use dal_auth::has_scope;
 use dal_common::error::DalError;
-use dal_db::{models::User, queries};
+use dal_db::{
+    models::{ApiToken, User},
+    queries,
+};
 
 use crate::state::AppState;
 
@@ -12,8 +16,35 @@ use crate::state::AppState;
 /// OR the `dal_access_token` cookie for browser sessions.
 /// API tokens are still accepted via `Authorization: Bearer dal_...`.
 pub struct AuthUser(pub User);
+pub struct AuthActor {
+    pub user: User,
+    pub api_token: Option<ApiToken>,
+}
+
+impl AuthActor {
+    pub fn require_scope(&self, scope: &str) -> Result<(), DalError> {
+        if let Some(token) = &self.api_token {
+            if !has_scope(&token.scopes, scope) {
+                return Err(DalError::Forbidden);
+            }
+        }
+        Ok(())
+    }
+}
 
 impl FromRequestParts<AppState> for AuthUser {
+    type Rejection = DalError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let actor = AuthActor::from_request_parts(parts, state).await?;
+        Ok(AuthUser(actor.user))
+    }
+}
+
+impl FromRequestParts<AppState> for AuthActor {
     type Rejection = DalError;
 
     async fn from_request_parts(
@@ -28,8 +59,7 @@ impl FromRequestParts<AppState> for AuthUser {
                 return Err(DalError::InvalidApiToken);
             }
             let hash = dal_auth::hash_token(&token);
-            let api_tok = queries::tokens::get_by_hash(&state.db, &hash)
-                .await?;
+            let api_tok = queries::tokens::get_by_hash(&state.db, &hash).await?;
             let api_tok = api_tok.ok_or(DalError::Unauthorized)?;
 
             // Touch last_used_at (fire-and-forget)
@@ -39,11 +69,13 @@ impl FromRequestParts<AppState> for AuthUser {
                 let _ = queries::tokens::touch(&db, id).await;
             });
 
-            let user = queries::users::get_by_id(&state.db, api_tok.user_id)
-                .await?;
+            let user = queries::users::get_by_id(&state.db, api_tok.user_id).await?;
             let user = user.ok_or(DalError::Unauthorized)?;
 
-            return Ok(AuthUser(user));
+            return Ok(AuthActor {
+                user,
+                api_token: Some(api_tok),
+            });
         }
 
         // Otherwise validate as Cognito JWT
@@ -52,7 +84,10 @@ impl FromRequestParts<AppState> for AuthUser {
             .await?
             .ok_or(DalError::Unauthorized)?;
 
-        Ok(AuthUser(user))
+        Ok(AuthActor {
+            user,
+            api_token: None,
+        })
     }
 }
 
@@ -74,7 +109,10 @@ impl FromRequestParts<AppState> for MaybeAuthUser {
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
     auth.strip_prefix("Bearer ")
 }
 

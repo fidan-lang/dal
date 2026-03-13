@@ -1,12 +1,15 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::Value;
 
-use dal_common::{error::DalError, pagination::{Page, PageParams}};
+use dal_common::{
+    error::DalError,
+    pagination::{Page, PageParams},
+};
 use dal_db::queries;
 
 use crate::state::AppState;

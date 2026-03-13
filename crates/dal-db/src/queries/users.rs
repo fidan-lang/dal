@@ -35,36 +35,33 @@ pub async fn get_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<User>> {
 }
 
 pub async fn get_by_username(pool: &PgPool, username: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE lower(username) = lower($1)",
-    )
-    .bind(username)
-    .fetch_optional(pool)
-    .await?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(username) = lower($1)")
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
     Ok(user)
 }
 
 pub async fn get_by_email(pool: &PgPool, email: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE lower(email) = lower($1)",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(email) = lower($1)")
+        .bind(email)
+        .fetch_optional(pool)
+        .await?;
     Ok(user)
 }
 
 pub async fn get_by_cognito_sub(pool: &PgPool, sub: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE cognito_sub = $1",
-    )
-    .bind(sub)
-    .fetch_optional(pool)
-    .await?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE cognito_sub = $1")
+        .bind(sub)
+        .fetch_optional(pool)
+        .await?;
     Ok(user)
 }
 
-pub async fn get_public_by_username(pool: &PgPool, username: &str) -> DalResult<Option<UserPublic>> {
+pub async fn get_public_by_username(
+    pool: &PgPool,
+    username: &str,
+) -> DalResult<Option<UserPublic>> {
     let user = sqlx::query_as::<_, UserPublic>(
         "SELECT id, username, display_name, avatar_url, bio, website, created_at
          FROM users WHERE lower(username) = lower($1)",
@@ -76,12 +73,10 @@ pub async fn get_public_by_username(pool: &PgPool, username: &str) -> DalResult<
 }
 
 pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> DalResult<()> {
-    sqlx::query(
-        "UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1",
-    )
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -114,22 +109,20 @@ pub async fn update_profile(
 }
 
 pub async fn username_exists(pool: &PgPool, username: &str) -> DalResult<bool> {
-    let row: (bool,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE lower(username) = lower($1))",
-    )
-    .bind(username)
-    .fetch_one(pool)
-    .await?;
+    let row: (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username) = lower($1))")
+            .bind(username)
+            .fetch_one(pool)
+            .await?;
     Ok(row.0)
 }
 
 pub async fn email_exists(pool: &PgPool, email: &str) -> DalResult<bool> {
-    let row: (bool,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1))",
-    )
-    .bind(email)
-    .fetch_one(pool)
-    .await?;
+    let row: (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1))")
+            .bind(email)
+            .fetch_one(pool)
+            .await?;
     Ok(row.0)
 }
 

@@ -12,14 +12,15 @@ async fn main() -> anyhow::Result<()> {
     dotenv().ok();
     tracing_init::init();
 
-    let queue_url = std::env::var("DAL_SQS_QUEUE_URL")
-        .context("missing DAL_SQS_QUEUE_URL")?;
-    let database_url = std::env::var("DATABASE_URL")
-        .context("missing DATABASE_URL")?;
+    let queue_url = std::env::var("DAL_SQS_QUEUE_URL").context("missing DAL_SQS_QUEUE_URL")?;
+    let database_url = std::env::var("DATABASE_URL").context("missing DATABASE_URL")?;
 
-    let db = dal_db::connect(&database_url).await.context("connect to DB")?;
+    let db = dal_db::connect(&database_url)
+        .await
+        .context("connect to DB")?;
 
-    let endpoint_url = std::env::var("DAL_SQS_ENDPOINT_URL").ok()
+    let endpoint_url = std::env::var("DAL_SQS_ENDPOINT_URL")
+        .ok()
         .filter(|s| !s.is_empty());
 
     let mut aws_loader = aws_config::from_env();

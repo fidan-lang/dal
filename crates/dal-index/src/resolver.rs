@@ -28,9 +28,9 @@ pub fn resolve(
             ))
         })?;
 
-        let versions = available.get(name).ok_or_else(|| {
-            DalError::PackageNotFound(name.clone())
-        })?;
+        let versions = available
+            .get(name)
+            .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
         // Collect non-yanked versions that satisfy the requirement
         let mut candidates: Vec<Version> = versions
@@ -43,14 +43,9 @@ pub fn resolve(
         // Sort descending, pick highest
         candidates.sort_unstable_by(|a, b| b.cmp(a));
 
-        let chosen = candidates
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                DalError::Validation(format!(
-                    "no version of `{name}` satisfies `{req_str}`"
-                ))
-            })?;
+        let chosen = candidates.into_iter().next().ok_or_else(|| {
+            DalError::Validation(format!("no version of `{name}` satisfies `{req_str}`"))
+        })?;
 
         debug!(package = name, version = %chosen, "resolved dependency");
         resolved.insert(name.clone(), chosen.to_string());

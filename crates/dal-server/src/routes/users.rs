@@ -1,15 +1,15 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, patch},
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::Value;
 
-use dal_common::{error::DalError, pagination::PageParams, pagination::Page};
+use dal_common::{error::DalError, pagination::Page, pagination::PageParams};
 use dal_db::queries;
 
-use crate::{extractors::AuthUser, state::AppState};
+use crate::{extractors::AuthActor, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -37,13 +37,9 @@ async fn user_packages(
         .await?
         .ok_or_else(|| DalError::UserNotFound(username))?;
 
-    let (items, total) = queries::packages::list_by_owner(
-        &state.db,
-        user.id,
-        params.limit(),
-        params.offset(),
-    )
-    .await?;
+    let (items, total) =
+        queries::packages::list_by_owner(&state.db, user.id, params.limit(), params.offset())
+            .await?;
 
     let page = Page::new(items, &params, total);
     Ok(Json(serde_json::to_value(&page).unwrap_or_default()))
@@ -52,19 +48,21 @@ async fn user_packages(
 #[derive(Deserialize)]
 struct UpdateProfileBody {
     display_name: Option<String>,
-    bio:          Option<String>,
-    website:      Option<String>,
-    avatar_url:   Option<String>,
+    bio: Option<String>,
+    website: Option<String>,
+    avatar_url: Option<String>,
 }
 
 async fn update_profile(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    actor: AuthActor,
     Json(body): Json<UpdateProfileBody>,
 ) -> Result<Json<Value>, DalError> {
+    actor.require_scope(dal_auth::USER_WRITE_SCOPE)?;
+
     let updated = queries::users::update_profile(
         &state.db,
-        user.id,
+        actor.user.id,
         body.display_name.as_deref(),
         body.bio.as_deref(),
         body.website.as_deref(),

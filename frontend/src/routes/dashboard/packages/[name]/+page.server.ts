@@ -15,7 +15,9 @@ export const load: PageServerLoad = async ({ fetch, params, parent }) => {
       owners.list(fetch, params.name),
     ]);
 
-    const membership = ownerList.find((owner) => owner.username === user.username);
+    const membership = ownerList.find(
+      (owner) => owner.username === user.username,
+    );
     if (!membership) {
       error(403, "You do not manage this package");
     }

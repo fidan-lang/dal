@@ -1,8 +1,8 @@
 use crate::models::ApiToken;
+use chrono::{DateTime, Utc};
 use dal_common::Result as DalResult;
 use sqlx::PgPool;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub async fn create(
     pool: &PgPool,
@@ -10,17 +10,19 @@ pub async fn create(
     name: &str,
     token_hash: &str,
     prefix: &str,
+    scopes: &[String],
     expires_at: Option<DateTime<Utc>>,
 ) -> DalResult<ApiToken> {
     let token = sqlx::query_as::<_, ApiToken>(
-        "INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, expires_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, scopes, expires_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
          RETURNING *",
     )
     .bind(user_id)
     .bind(name)
     .bind(token_hash)
     .bind(prefix)
+    .bind(scopes)
     .bind(expires_at)
     .fetch_one(pool)
     .await?;
@@ -58,12 +60,10 @@ pub async fn touch(pool: &PgPool, id: Uuid) -> DalResult<()> {
 }
 
 pub async fn delete(pool: &PgPool, id: Uuid, user_id: Uuid) -> DalResult<bool> {
-    let res = sqlx::query(
-        "DELETE FROM api_tokens WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    let res = sqlx::query("DELETE FROM api_tokens WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(res.rows_affected() > 0)
 }

@@ -157,9 +157,7 @@ pub enum ManifestError {
     NotUtf8,
     #[error("invalid TOML: {0}")]
     Toml(#[from] toml::de::Error),
-    #[error(
-        "invalid package name `{0}`: must be lowercase, alphanumeric with hyphens, 1-64 chars"
-    )]
+    #[error("invalid package name `{0}`: must be lowercase, alphanumeric with hyphens, 1-64 chars")]
     InvalidName(String),
     #[error("invalid SemVer version `{0}`")]
     InvalidVersion(String),

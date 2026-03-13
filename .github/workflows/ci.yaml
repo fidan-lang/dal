@@ -1,173 +1,165 @@
 name: CI
 
 on:
-    push:
-        branches: [main]
-    pull_request:
-        branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 env:
-    CARGO_TERM_COLOR: always
-    AWS_REGION: ${{ vars.AWS_REGION || 'eu-central-1' }}
-    ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  CARGO_TERM_COLOR: always
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-central-1' }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
 
 jobs:
-    # ─── Test + Lint ────────────────────────────────────────────────────────────
-    test:
-        name: Test & Lint
-        runs-on: ubuntu-latest
-        services:
-            postgres:
-                image: postgres:16
-                env:
-                    POSTGRES_USER: dal
-                    POSTGRES_PASSWORD: dal
-                    POSTGRES_DB: dal_test
-                ports:
-                    - 5432:5432
-                options: >-
-                    --health-cmd pg_isready
-                    --health-interval 10s
-                    --health-timeout 5s
-                    --health-retries 5
+  # ─── Test + Lint ────────────────────────────────────────────────────────────
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
 
-        env:
-            DATABASE_URL: postgres://dal:dal@localhost:5432/dal_test
-            DAL_COGNITO_USER_POOL_ID: eu-central-1_TESTPOOL
-            DAL_COGNITO_CLIENT_ID: testclientid
-            DAL_S3_BUCKET: dal-packages-ci
-            DAL_SQS_QUEUE_URL: https://sqs.eu-central-1.amazonaws.com/000000000000/dal-jobs.fifo
-            AWS_REGION: eu-central-1
-            MAILJET_API_KEY: dummy
-            MAILJET_SECRET_KEY: dummy
-            MAILJET_FROM_EMAIL: no-reply@example.com
-            MAILJET_FROM_NAME: Dal CI
-            DAL_LISTEN_ADDR: "0.0.0.0:8080"
-            DAL_BASE_URL: "http://localhost:8080"
-            DAL_MAX_UPLOAD_BYTES: "52428800"
-            DAL_LOG_LEVEL: error
+    steps:
+      - uses: actions/checkout@v4
 
-        steps:
-            - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-            - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  components: clippy, rustfmt
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
 
-            - name: Cache cargo registry
-              uses: Swatinem/rust-cache@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-            - name: Check formatting
-              run: cargo fmt --all -- --check
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
 
-            - name: Clippy
-              run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-            - name: Run tests
-              run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-    # ─── Build & Push Docker images (main branch only) ──────────────────────────
-    docker:
-        name: Build & Push Docker
-        needs: test
-        runs-on: ubuntu-latest
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        permissions:
-            id-token: write # for OIDC
-            contents: read
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: npm run check
 
-        steps:
-            - uses: actions/checkout@v4
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
 
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v4
-              with:
-                  role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-                  aws-region: ${{ env.AWS_REGION }}
+      - name: Run non-server workspace tests
+        run: cargo test --workspace --all-targets --exclude dal-server
 
-            - name: Login to Amazon ECR
-              id: login-ecr
-              uses: aws-actions/amazon-ecr-login@v2
+      - name: Run dal-server integration stack
+        run: bash ./scripts/test.sh --with-cognito
 
-            - name: Set image tag
-              id: vars
-              run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+  # ─── Build & Push Docker images (main branch only) ──────────────────────────
+  docker:
+    name: Build & Push Docker
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write # for OIDC
+      contents: read
 
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Build and push dal-server
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  target: server
-                  push: true
-                  tags: |
-                      ${{ env.ECR_REGISTRY }}/dal-server:${{ steps.vars.outputs.tag }}
-                      ${{ env.ECR_REGISTRY }}/dal-server:latest
-                  cache-from: type=gha,scope=dal-server
-                  cache-to: type=gha,mode=max,scope=dal-server
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            - name: Build and push dal-worker
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  target: worker
-                  push: true
-                  tags: |
-                      ${{ env.ECR_REGISTRY }}/dal-worker:${{ steps.vars.outputs.tag }}
-                      ${{ env.ECR_REGISTRY }}/dal-worker:latest
-                  cache-from: type=gha,scope=dal-worker
-                  cache-to: type=gha,mode=max,scope=dal-worker
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    # ─── Deploy to ECS (main branch only, after Docker push) ────────────────────
-    deploy:
-        name: Deploy to ECS
-        needs: docker
-        runs-on: ubuntu-latest
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        permissions:
-            id-token: write
-            contents: read
+      - name: Set image tag
+        id: vars
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-        steps:
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v4
-              with:
-                  role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-                  aws-region: ${{ env.AWS_REGION }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-            - name: Set image tag
-              id: vars
-              run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      - name: Build and push dal-server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: server
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/dal-server:${{ steps.vars.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/dal-server:latest
+          cache-from: type=gha,scope=dal-server
+          cache-to: type=gha,mode=max,scope=dal-server
 
-            - name: Deploy dal-server to ECS
-              run: |
-                  aws ecs update-service \
-                    --cluster "${{ secrets.ECS_CLUSTER }}" \
-                    --service "${{ secrets.ECS_SERVER_SERVICE }}" \
-                    --force-new-deployment \
-                    --region "${{ env.AWS_REGION }}"
+      - name: Build and push dal-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: worker
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/dal-worker:${{ steps.vars.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/dal-worker:latest
+          cache-from: type=gha,scope=dal-worker
+          cache-to: type=gha,mode=max,scope=dal-worker
 
-            - name: Deploy dal-worker to ECS
-              run: |
-                  aws ecs update-service \
-                    --cluster "${{ secrets.ECS_CLUSTER }}" \
-                    --service "${{ secrets.ECS_WORKER_SERVICE }}" \
-                    --force-new-deployment \
-                    --region "${{ env.AWS_REGION }}"
+  # ─── Deploy to ECS (main branch only, after Docker push) ────────────────────
+  deploy:
+    name: Deploy to ECS
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write
+      contents: read
 
-            - name: Wait for dal-server stability
-              run: |
-                  aws ecs wait services-stable \
-                    --cluster "${{ secrets.ECS_CLUSTER }}" \
-                    --services "${{ secrets.ECS_SERVER_SERVICE }}" \
-                    --region "${{ env.AWS_REGION }}"
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            - name: Wait for dal-worker stability
-              run: |
-                  aws ecs wait services-stable \
-                    --cluster "${{ secrets.ECS_CLUSTER }}" \
-                    --services "${{ secrets.ECS_WORKER_SERVICE }}" \
-                    --region "${{ env.AWS_REGION }}"
+      - name: Set image tag
+        id: vars
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy dal-server to ECS
+        run: |
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --force-new-deployment \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Deploy dal-worker to ECS
+        run: |
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --force-new-deployment \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Wait for dal-server stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Wait for dal-worker stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --region "${{ env.AWS_REGION }}"

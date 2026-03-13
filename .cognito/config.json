@@ -1,0 +1,13 @@
+{
+  "ServerConfig": {
+    "hostname": "127.0.0.1",
+    "port": 9229,
+    "https": false
+  },
+  "TokenConfig": {
+    "IssuerDomain": "http://127.0.0.1:9229"
+  },
+  "UserPoolDefaults": {
+    "UsernameAttributes": []
+  }
+}

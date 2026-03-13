@@ -6,12 +6,12 @@ use tracing::info;
 
 /// Mailjet REST API email sender.
 pub struct MailjetClient {
-    http:       Client,
-    api_key:    String,
+    http: Client,
+    api_key: String,
     secret_key: String,
     from_email: String,
-    from_name:  String,
-    base_url:   String,
+    from_name: String,
+    base_url: String,
 }
 
 impl MailjetClient {
@@ -21,13 +21,14 @@ impl MailjetClient {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .context("build http client")?,
-            api_key:    std::env::var("MAILJET_API_KEY").context("MAILJET_API_KEY")?,
+            api_key: std::env::var("MAILJET_API_KEY").context("MAILJET_API_KEY")?,
             secret_key: std::env::var("MAILJET_SECRET_KEY").context("MAILJET_SECRET_KEY")?,
             from_email: std::env::var("MAILJET_FROM_EMAIL")
                 .unwrap_or_else(|_| "noreply@dal.fidan.dev".into()),
             from_name: std::env::var("MAILJET_FROM_NAME")
                 .unwrap_or_else(|_| "Dal Package Registry".into()),
-            base_url: "https://api.mailjet.com/v3.1".into(),
+            base_url: std::env::var("MAILJET_BASE_URL")
+                .unwrap_or_else(|_| "https://api.mailjet.com/v3.1".into()),
         })
     }
 

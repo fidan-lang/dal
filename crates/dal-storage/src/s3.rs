@@ -1,14 +1,10 @@
-use aws_sdk_s3::{
-    presigning::PresigningConfig,
-    primitives::ByteStream,
-    Client,
-};
+use aws_sdk_s3::{Client, presigning::PresigningConfig, primitives::ByteStream};
 use dal_common::error::DalError;
 use std::time::Duration;
 
 /// Thin wrapper around the S3 SDK client.
 pub struct StorageClient {
-    inner:  Client,
+    inner: Client,
     bucket: String,
 }
 

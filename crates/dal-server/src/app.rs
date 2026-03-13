@@ -11,20 +11,39 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-pub fn build_router(state: AppState) -> Router {
-    let allowed_origins = [
-        "http://127.0.0.1:4173",
-        "http://localhost:4173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "https://dal.fidan.dev",
-    ]
-    .into_iter()
-    .map(|origin| origin.parse::<HeaderValue>().unwrap())
-    .collect::<Vec<_>>();
+fn allowed_origins() -> Vec<HeaderValue> {
+    let mut origins = vec![
+        "http://127.0.0.1:4173".to_string(),
+        "http://localhost:4173".to_string(),
+        "http://127.0.0.1:4174".to_string(),
+        "http://localhost:4174".to_string(),
+        "http://127.0.0.1:5173".to_string(),
+        "http://localhost:5173".to_string(),
+        "https://dal.fidan.dev".to_string(),
+    ];
 
+    if let Ok(extra_origins) = std::env::var("DAL_ALLOWED_ORIGINS") {
+        origins.extend(
+            extra_origins
+                .split(',')
+                .map(str::trim)
+                .filter(|origin| !origin.is_empty())
+                .map(ToOwned::to_owned),
+        );
+    }
+
+    origins.sort();
+    origins.dedup();
+
+    origins
+        .into_iter()
+        .filter_map(|origin| origin.parse::<HeaderValue>().ok())
+        .collect()
+}
+
+pub fn build_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_origin(AllowOrigin::list(allowed_origins()))
         .allow_methods([
             Method::GET,
             Method::POST,

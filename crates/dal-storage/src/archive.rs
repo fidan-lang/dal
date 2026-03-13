@@ -5,13 +5,13 @@ use std::io::Read;
 /// Information extracted from a validated `.tar.gz` package archive.
 pub struct ArchiveInfo {
     /// SHA-256 hex digest of the raw compressed bytes.
-    pub checksum:       String,
+    pub checksum: String,
     /// Compressed size in bytes.
-    pub size_bytes:     i64,
+    pub size_bytes: i64,
     /// Raw bytes of `dal.toml` if found in the archive root.
     pub manifest_bytes: Option<Vec<u8>>,
     /// Raw bytes of the README file (README.md / readme.md) if present.
-    pub readme_bytes:   Option<Vec<u8>>,
+    pub readme_bytes: Option<Vec<u8>>,
 }
 
 /// Validate a `.tar.gz` archive and extract key metadata.
@@ -47,8 +47,8 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         .map_err(|e| DalError::ArchiveInvalid(format!("cannot read archive entries: {e}")))?;
 
     for entry in entries {
-        let mut entry = entry
-            .map_err(|e| DalError::ArchiveInvalid(format!("bad archive entry: {e}")))?;
+        let mut entry =
+            entry.map_err(|e| DalError::ArchiveInvalid(format!("bad archive entry: {e}")))?;
 
         let path = entry
             .path()
@@ -71,7 +71,9 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
             }
         }
 
-        let size = entry.header().size()
+        let size = entry
+            .header()
+            .size()
             .map_err(|e| DalError::ArchiveInvalid(format!("bad entry size: {e}")))?;
         uncompressed_size = uncompressed_size.saturating_add(size);
 
@@ -97,14 +99,18 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
 
         if normalized == "dal.toml" && manifest_bytes.is_none() {
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf)
+            entry
+                .read_to_end(&mut buf)
                 .map_err(|e| DalError::ArchiveInvalid(format!("cannot read dal.toml: {e}")))?;
             manifest_bytes = Some(buf);
-        } else if matches!(normalized.to_lowercase().as_str(), "readme.md" | "readme.txt" | "readme")
-            && readme_bytes.is_none()
+        } else if matches!(
+            normalized.to_lowercase().as_str(),
+            "readme.md" | "readme.txt" | "readme"
+        ) && readme_bytes.is_none()
         {
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf)
+            entry
+                .read_to_end(&mut buf)
                 .map_err(|e| DalError::ArchiveInvalid(format!("cannot read README: {e}")))?;
             // Limit README to 512 KiB
             if buf.len() > 512 * 1024 {

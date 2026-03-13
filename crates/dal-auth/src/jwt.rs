@@ -2,9 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jsonwebtoken::{
-    decode, decode_header,
+    Algorithm, DecodingKey, Validation, decode, decode_header,
     jwk::{AlgorithmParameters, JwkSet},
-    Algorithm, DecodingKey, Validation,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -16,18 +15,18 @@ use dal_common::error::DalError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// Cognito `sub` (stable user identifier across password changes).
-    pub sub:            String,
+    pub sub: String,
     /// Cognito username.
     #[serde(rename = "cognito:username")]
     pub cognito_username: Option<String>,
-    pub email:          Option<String>,
+    pub email: Option<String>,
     pub email_verified: Option<bool>,
-    pub aud:            Option<String>,
-    pub client_id:      Option<String>,
-    pub iss:            String,
-    pub exp:            i64,
-    pub iat:            i64,
-    pub token_use:      Option<String>,
+    pub aud: Option<String>,
+    pub client_id: Option<String>,
+    pub iss: String,
+    pub exp: i64,
+    pub iat: i64,
+    pub token_use: Option<String>,
 }
 
 /// Validates Cognito JWTs.
@@ -40,12 +39,12 @@ pub struct JwtValidator {
 }
 
 struct Inner {
-    jwks_uri:  String,
-    issuer:    String,
-    audience:  String,
+    jwks_uri: String,
+    issuer: String,
+    audience: String,
     /// Cached JwkSet, refreshed lazily on unknown `kid`.
-    cache:     RwLock<Option<JwkSet>>,
-    http:      reqwest::Client,
+    cache: RwLock<Option<JwkSet>>,
+    http: reqwest::Client,
 }
 
 impl JwtValidator {
@@ -54,12 +53,7 @@ impl JwtValidator {
     /// * `region`    – AWS region, e.g. `eu-central-1`
     /// * `pool_id`   – Cognito User Pool ID, e.g. `eu-central-1_Xyz`
     /// * `client_id` – App client ID (audience)
-    pub fn new(
-        region: &str,
-        pool_id: &str,
-        client_id: &str,
-        endpoint_url: Option<&str>,
-    ) -> Self {
+    pub fn new(region: &str, pool_id: &str, client_id: &str, endpoint_url: Option<&str>) -> Self {
         let issuer = match endpoint_url {
             Some(base) => format!("{}/{}", base.trim_end_matches('/'), pool_id),
             None => format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}"),
@@ -81,8 +75,7 @@ impl JwtValidator {
 
     /// Validate a raw JWT string and return the decoded claims.
     pub async fn validate(&self, token: &str) -> Result<Claims, DalError> {
-        let header = decode_header(token)
-            .map_err(|_| DalError::Unauthorized)?;
+        let header = decode_header(token).map_err(|_| DalError::Unauthorized)?;
         let kid = header.kid.ok_or(DalError::Unauthorized)?;
 
         // Try cached JWKS first
@@ -99,8 +92,8 @@ impl JwtValidator {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_aud = false;
 
-        let data = decode::<Claims>(token, &key, &validation)
-            .map_err(|_| DalError::Unauthorized)?;
+        let data =
+            decode::<Claims>(token, &key, &validation).map_err(|_| DalError::Unauthorized)?;
 
         let claims = data.claims;
         if claims.iss != self.inner.issuer {
@@ -121,9 +114,7 @@ impl JwtValidator {
         let jwks = cache.as_ref()?;
         let jwk = jwks.find(kid)?;
         match &jwk.algorithm {
-            AlgorithmParameters::RSA(rsa) => {
-                DecodingKey::from_rsa_components(&rsa.n, &rsa.e).ok()
-            }
+            AlgorithmParameters::RSA(rsa) => DecodingKey::from_rsa_components(&rsa.n, &rsa.e).ok(),
             _ => None,
         }
     }

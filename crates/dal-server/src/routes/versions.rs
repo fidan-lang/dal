@@ -1,12 +1,12 @@
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Multipart, Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use dal_common::error::DalError;
@@ -14,13 +14,16 @@ use dal_db::queries;
 use dal_manifest::Manifest;
 use dal_storage::StorageClient;
 
-use crate::{extractors::AuthUser, state::AppState};
+use crate::{extractors::AuthActor, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/packages/{name}/versions", get(list_versions))
         .route("/packages/{name}/versions/{version}", get(get_version))
-        .route("/packages/{name}/versions/{version}/download", get(download))
+        .route(
+            "/packages/{name}/versions/{version}/download",
+            get(download),
+        )
         .route("/packages/{name}/publish", post(publish))
         .route("/packages/{name}/versions/{version}/yank", put(yank))
         .route("/packages/{name}/versions/{version}/unyank", put(unyank))
@@ -101,19 +104,22 @@ async fn download(
 /// the `.tar.gz` bytes. The archive must contain `dal.toml` at its root.
 async fn publish(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    actor: AuthActor,
     Path(name): Path<String>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), DalError> {
     // Extract archive bytes from multipart
     let mut archive_bytes: Option<Bytes> = None;
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        DalError::Validation(format!("multipart error: {e}"))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| DalError::Validation(format!("multipart error: {e}")))?
+    {
         if field.name() == Some("archive") {
-            let data = field.bytes().await.map_err(|e| {
-                DalError::Validation(format!("upload read error: {e}"))
-            })?;
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| DalError::Validation(format!("upload read error: {e}")))?;
             archive_bytes = Some(data);
             break;
         }
@@ -142,9 +148,11 @@ async fn publish(
 
     let version_str = manifest.package.version.clone();
 
+    let user = &actor.user;
     // Get or create the package record
     let pkg = match queries::packages::get_by_name(&state.db, &name).await? {
         Some(p) => {
+            actor.require_scope(dal_auth::PUBLISH_UPDATE_SCOPE)?;
             // Ownership check
             if !queries::packages::is_member(&state.db, p.id, user.id).await? {
                 return Err(DalError::Forbidden);
@@ -152,6 +160,7 @@ async fn publish(
             p
         }
         None => {
+            actor.require_scope(dal_auth::PUBLISH_NEW_SCOPE)?;
             // First publish — create package + set publisher as owner
             let pkg_id = Uuid::new_v4();
             let pkg = queries::packages::create(
@@ -186,9 +195,7 @@ async fn publish(
 
     // Persist version record
     let ver_id = Uuid::new_v4();
-    let readme = info
-        .readme_bytes
-        .and_then(|b| String::from_utf8(b).ok());
+    let readme = info.readme_bytes.and_then(|b| String::from_utf8(b).ok());
 
     queries::versions::create(
         &state.db,
@@ -229,11 +236,14 @@ async fn publish(
     )
     .await;
 
-    Ok((StatusCode::CREATED, Json(json!({
-        "message": "published",
-        "package": pkg.name,
-        "version": version_str,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "message": "published",
+            "package": pkg.name,
+            "version": version_str,
+        })),
+    ))
 }
 
 // ── Yank / Unyank ─────────────────────────────────────────────────────────────
@@ -245,15 +255,17 @@ struct YankBody {
 
 async fn yank(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    actor: AuthActor,
     Path((name, version)): Path<(String, String)>,
     Json(body): Json<YankBody>,
 ) -> Result<Json<Value>, DalError> {
+    actor.require_scope(dal_auth::YANK_SCOPE)?;
+
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_member(&state.db, pkg.id, user.id).await? {
+    if !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 
@@ -267,14 +279,16 @@ async fn yank(
 
 async fn unyank(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    actor: AuthActor,
     Path((name, version)): Path<(String, String)>,
 ) -> Result<Json<Value>, DalError> {
+    actor.require_scope(dal_auth::YANK_SCOPE)?;
+
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_member(&state.db, pkg.id, user.id).await? {
+    if !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 

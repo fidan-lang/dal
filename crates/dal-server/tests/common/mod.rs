@@ -33,9 +33,9 @@ fn test_config() -> Config {
                 .unwrap_or_else(|_| "http://localhost:4567".to_string()),
         ),
         cognito_user_pool_id: std::env::var("TEST_COGNITO_POOL_ID")
-            .unwrap_or_else(|_| "eu-central-1_testpool".to_string()),
+            .unwrap_or_else(|_| "local_0dPm2L0N".to_string()),
         cognito_client_id: std::env::var("TEST_COGNITO_CLIENT_ID")
-            .unwrap_or_else(|_| "testclientid000000000000000".to_string()),
+            .unwrap_or_else(|_| "bs5obcfdxmvh7g6ldnqmeahae".to_string()),
         cognito_endpoint_url: std::env::var("TEST_COGNITO_ENDPOINT_URL").ok(),
         aws_region: std::env::var("AWS_REGION")
             .unwrap_or_else(|_| "eu-central-1".to_string()),

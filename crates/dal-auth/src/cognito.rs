@@ -4,8 +4,8 @@ use dal_common::error::DalError;
 
 /// Thin wrapper around the AWS Cognito Identity Provider SDK client.
 pub struct CognitoClient {
-    inner:     Client,
-    pool_id:   String,
+    inner: Client,
+    pool_id: String,
     client_id: String,
 }
 
@@ -23,11 +23,14 @@ impl CognitoClient {
             Some(url) => aws_sdk_cognitoidentityprovider::config::Builder::from(aws_cfg)
                 .endpoint_url(url)
                 .build(),
-            None => aws_sdk_cognitoidentityprovider::config::Builder::from(aws_cfg)
-                .build(),
+            None => aws_sdk_cognitoidentityprovider::config::Builder::from(aws_cfg).build(),
         };
         let inner = Client::from_conf(client_cfg);
-        Self { inner, pool_id, client_id }
+        Self {
+            inner,
+            pool_id,
+            client_id,
+        }
     }
 
     /// Sign in with username (or email) + password.
@@ -52,18 +55,15 @@ impl CognitoClient {
             .authentication_result()
             .ok_or_else(|| DalError::Cognito("no authentication result".into()))?;
 
-        let access  = result.access_token().unwrap_or_default().to_string();
-        let id      = result.id_token().unwrap_or_default().to_string();
+        let access = result.access_token().unwrap_or_default().to_string();
+        let id = result.id_token().unwrap_or_default().to_string();
         let refresh = result.refresh_token().unwrap_or_default().to_string();
 
         Ok((access, id, refresh))
     }
 
     /// Refresh tokens using a refresh_token.
-    pub async fn refresh(
-        &self,
-        refresh_token: &str,
-    ) -> Result<(String, String), DalError> {
+    pub async fn refresh(&self, refresh_token: &str) -> Result<(String, String), DalError> {
         let resp = self
             .inner
             .initiate_auth()
@@ -79,7 +79,7 @@ impl CognitoClient {
             .ok_or_else(|| DalError::Cognito("no authentication result from refresh".into()))?;
 
         let access = result.access_token().unwrap_or_default().to_string();
-        let id     = result.id_token().unwrap_or_default().to_string();
+        let id = result.id_token().unwrap_or_default().to_string();
         Ok((access, id))
     }
 

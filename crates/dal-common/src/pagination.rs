@@ -16,8 +16,12 @@ pub struct PageParams {
 }
 
 impl PageParams {
-    fn default_page() -> u32 { 1 }
-    fn default_per_page() -> u32 { 25 }
+    fn default_page() -> u32 {
+        1
+    }
+    fn default_per_page() -> u32 {
+        25
+    }
 
     /// Returns a validated (page, per_page) tuple.
     /// - page   is clamped to ≥ 1
@@ -44,18 +48,24 @@ impl PageParams {
 /// A paginated page of results.
 #[derive(Debug, Serialize)]
 pub struct Page<T> {
-    pub items:    Vec<T>,
-    pub page:     u32,
+    pub items: Vec<T>,
+    pub page: u32,
     pub per_page: u32,
-    pub total:    i64,
-    pub pages:    u32,
+    pub total: i64,
+    pub pages: u32,
 }
 
 impl<T> Page<T> {
     pub fn new(items: Vec<T>, params: &PageParams, total: i64) -> Self {
         let (page, per_page) = params.validated();
         let pages = ((total as f64) / (per_page as f64)).ceil() as u32;
-        Self { items, page, per_page, total, pages }
+        Self {
+            items,
+            page,
+            per_page,
+            total,
+            pages,
+        }
     }
 }
 

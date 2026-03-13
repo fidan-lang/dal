@@ -10,15 +10,15 @@ use crate::middleware::rate_limit::RateLimiter;
 /// Shared application state — cheap to clone (all Arc-backed).
 #[derive(Clone)]
 pub struct AppState {
-    pub db:         PgPool,
-    pub storage:    Arc<StorageClient>,
-    pub cognito:    Arc<CognitoClient>,
-    pub jwt:        Arc<JwtValidator>,
-    pub rate:       Arc<RateLimiter>,
+    pub db: PgPool,
+    pub storage: Arc<StorageClient>,
+    pub cognito: Arc<CognitoClient>,
+    pub jwt: Arc<JwtValidator>,
+    pub rate: Arc<RateLimiter>,
     /// SQS queue URL for dispatching background jobs.
-    pub sqs_url:    String,
+    pub sqs_url: String,
     pub sqs_client: Arc<aws_sdk_sqs::Client>,
-    pub cfg:        Arc<Config>,
+    pub cfg: Arc<Config>,
 }
 
 impl AppState {
@@ -36,11 +36,8 @@ impl AppState {
             .await;
 
         // Storage
-        let storage = StorageClient::new(
-            cfg.s3_bucket.clone(),
-            cfg.s3_endpoint_url.clone(),
-        )
-        .await?;
+        let storage =
+            StorageClient::new(cfg.s3_bucket.clone(), cfg.s3_endpoint_url.clone()).await?;
 
         // Cognito
         let cognito = CognitoClient::from_sdk_config(
@@ -73,13 +70,13 @@ impl AppState {
 
         Ok(Self {
             db,
-            storage:    Arc::new(storage),
-            cognito:    Arc::new(cognito),
-            jwt:        Arc::new(jwt),
-            rate:       Arc::new(rate),
-            sqs_url:    cfg.sqs_queue_url.clone(),
+            storage: Arc::new(storage),
+            cognito: Arc::new(cognito),
+            jwt: Arc::new(jwt),
+            rate: Arc::new(rate),
+            sqs_url: cfg.sqs_queue_url.clone(),
             sqs_client: Arc::new(sqs_client),
-            cfg:        Arc::new(cfg.clone()),
+            cfg: Arc::new(cfg.clone()),
         })
     }
 }

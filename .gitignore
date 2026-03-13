@@ -4,7 +4,8 @@ Cargo.lock
 .env.local
 .env.*.local
 **/LOCAL
-.cognito/
+.cognito/db/*.json
+!.cognito/db/clients.json
 
 # Binaries
 *.exe
@@ -28,6 +29,8 @@ Thumbs.db
 dist/
 .svelte-kit/
 .wrangler/
+playwright-report/
+test-results/
 node_modules/
 .pnpm-store/
 pnpm-lock.yaml

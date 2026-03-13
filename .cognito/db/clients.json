@@ -1,0 +1,21 @@
+{
+  "Clients": {
+    "bs5obcfdxmvh7g6ldnqmeahae": {
+      "ClientId": "bs5obcfdxmvh7g6ldnqmeahae",
+      "ClientName": "dal-web",
+      "CreationDate": "2026-03-13T13:48:22.786Z",
+      "ExplicitAuthFlows": [
+        "ALLOW_USER_PASSWORD_AUTH",
+        "ALLOW_REFRESH_TOKEN_AUTH",
+        "ALLOW_ADMIN_USER_PASSWORD_AUTH"
+      ],
+      "LastModifiedDate": "2026-03-13T13:48:22.786Z",
+      "TokenValidityUnits": {
+        "AccessToken": "hours",
+        "IdToken": "minutes",
+        "RefreshToken": "days"
+      },
+      "UserPoolId": "local_0dPm2L0N"
+    }
+  }
+}

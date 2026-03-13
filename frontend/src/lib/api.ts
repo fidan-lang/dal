@@ -3,6 +3,7 @@
  * All requests go through SvelteKit's fetch so SSR and CSR both work.
  */
 import { env } from "$env/dynamic/public";
+import type { Cookies } from "@sveltejs/kit";
 
 function normalizeApiBase(value: string | undefined): string | null {
   if (!value) return null;
@@ -69,13 +70,69 @@ export interface PackageOwner {
   added_at: string;
 }
 
+export type TokenScope =
+  | "publish:new"
+  | "publish:update"
+  | "yank"
+  | "owner"
+  | "user:write";
+
+export interface TokenScopeOption {
+  value: TokenScope;
+  label: string;
+  description: string;
+}
+
+export const TOKEN_SCOPE_OPTIONS: TokenScopeOption[] = [
+  {
+    value: "publish:new",
+    label: "Publish new packages",
+    description: "Create brand new package names.",
+  },
+  {
+    value: "publish:update",
+    label: "Publish updates",
+    description: "Upload new versions to packages you already belong to.",
+  },
+  {
+    value: "yank",
+    label: "Yank versions",
+    description: "Yank and restore published versions.",
+  },
+  {
+    value: "owner",
+    label: "Manage owners",
+    description: "Invite, remove, and transfer package ownership.",
+  },
+  {
+    value: "user:write",
+    label: "Edit profile",
+    description: "Update your account profile settings.",
+  },
+];
+
 export interface ApiToken {
   id: string;
   name: string;
   prefix: string;
+  scopes: TokenScope[];
   last_used_at: string | null;
   expires_at: string | null;
   created_at: string;
+}
+
+export interface OwnershipInvite {
+  id: string;
+  package_id: string;
+  package_name: string;
+  package_description: string | null;
+  inviter_username: string;
+  inviter_display_name: string | null;
+  role: "owner" | "collaborator";
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  declined_at: string | null;
 }
 
 export interface Page<T> {
@@ -102,11 +159,17 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  options?: { headers?: HeadersInit },
 ): Promise<T> {
+  const headers = new Headers(options?.headers);
+  if (body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const res = await fetchFn(`${API_BASE}${path}`, {
     method,
     credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -143,6 +206,19 @@ export class DalApiError extends Error {
     super(message);
     this.name = "DalApiError";
   }
+}
+
+export function buildAuthCookieHeader(cookies: Cookies): string | null {
+  const accessToken = cookies.get("dal_access_token");
+  const refreshToken = cookies.get("dal_refresh_token");
+  const cookieHeader = [
+    accessToken ? `dal_access_token=${accessToken}` : null,
+    refreshToken ? `dal_refresh_token=${refreshToken}` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  return cookieHeader.length > 0 ? cookieHeader : null;
 }
 
 function asObject(value: unknown): JsonObject {
@@ -250,9 +326,28 @@ function normalizeToken(raw: unknown): ApiToken {
     id: asString(token.id),
     name: asString(token.name),
     prefix: asString(token.prefix),
+    scopes: asStringArray(token.scopes) as TokenScope[],
     last_used_at: asNullableString(token.last_used_at),
     expires_at: asNullableString(token.expires_at),
     created_at: asString(token.created_at),
+  };
+}
+
+function normalizeInvite(raw: unknown): OwnershipInvite {
+  const invite = asObject(raw);
+
+  return {
+    id: asString(invite.id),
+    package_id: asString(invite.package_id),
+    package_name: asString(invite.package_name),
+    package_description: asNullableString(invite.package_description),
+    inviter_username: asString(invite.inviter_username),
+    inviter_display_name: asNullableString(invite.inviter_display_name),
+    role: asString(invite.role, "collaborator") as OwnershipInvite["role"],
+    created_at: asString(invite.created_at),
+    expires_at: asString(invite.expires_at),
+    accepted_at: asNullableString(invite.accepted_at),
+    declined_at: asNullableString(invite.declined_at),
   };
 }
 
@@ -425,6 +520,23 @@ export const owners = {
       role,
     }),
 
+  pendingInvites: async (f: FetchFn, options?: { headers?: HeadersInit }) =>
+    (
+      await request<unknown[]>(f, "GET", "/owners/invites", undefined, options)
+    ).map(normalizeInvite),
+
+  acceptInvite: async (f: FetchFn, id: string) => {
+    const result = await request<{ invite?: unknown }>(
+      f,
+      "POST",
+      `/owners/invites/${id}/accept`,
+    );
+    return result.invite ? normalizeInvite(result.invite) : null;
+  },
+
+  declineInvite: (f: FetchFn, id: string) =>
+    request<{ message: string }>(f, "POST", `/owners/invites/${id}/decline`),
+
   remove: (f: FetchFn, name: string, username: string) =>
     request<void>(f, "DELETE", `/packages/${name}/owners/${username}`),
 
@@ -437,16 +549,30 @@ export const owners = {
 // ── API tokens ───────────────────────────────────────────────────────────────
 
 export const tokens = {
-  list: async (f: FetchFn) =>
-    (await request<unknown[]>(f, "GET", "/tokens")).map(normalizeToken),
+  list: async (f: FetchFn, options?: { headers?: HeadersInit }) =>
+    (await request<unknown[]>(f, "GET", "/tokens", undefined, options)).map(
+      normalizeToken,
+    ),
 
-  create: async (f: FetchFn, name: string) => {
-    const created = await request<unknown>(f, "POST", "/tokens", { name });
+  create: async (
+    f: FetchFn,
+    name: string,
+    options?: { scopes?: TokenScope[]; expires_in?: number | null },
+  ) => {
+    const created = await request<unknown>(f, "POST", "/tokens", {
+      name,
+      scopes: options?.scopes,
+      expires_in: options?.expires_in ?? undefined,
+    });
     const payload = asObject(created);
     const metaSource = payload.meta ?? {
       ...payload,
+      scopes: options?.scopes ?? [],
       last_used_at: null,
-      expires_at: null,
+      expires_at:
+        options?.expires_in != null
+          ? new Date(Date.now() + options.expires_in * 1000).toISOString()
+          : null,
       created_at: new Date().toISOString(),
     };
 

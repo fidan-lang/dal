@@ -51,10 +51,7 @@ pub async fn get(
     Ok(v)
 }
 
-pub async fn list_for_package(
-    pool: &PgPool,
-    package_id: Uuid,
-) -> DalResult<Vec<PackageVersion>> {
+pub async fn list_for_package(pool: &PgPool, package_id: Uuid) -> DalResult<Vec<PackageVersion>> {
     let versions = sqlx::query_as::<_, PackageVersion>(
         "SELECT * FROM package_versions WHERE package_id = $1 ORDER BY created_at DESC",
     )
@@ -118,12 +115,10 @@ pub async fn unyank(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult
 }
 
 pub async fn increment_downloads(pool: &PgPool, id: Uuid) -> DalResult<()> {
-    sqlx::query(
-        "UPDATE package_versions SET downloads = downloads + 1 WHERE id = $1",
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE package_versions SET downloads = downloads + 1 WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

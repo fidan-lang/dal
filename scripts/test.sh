@@ -23,10 +23,25 @@ fi
 EXTRA_ARGS=""
 if [[ "${1:-}" == "--with-cognito" ]]; then
     echo "==> Starting cognito-local..."
-    npx --yes cognito-local &
+    mkdir -p LOCAL
+    npx --yes cognito-local > LOCAL/cognito-local.log 2>&1 &
     COGNITO_PID=$!
-    export TEST_COGNITO_ENDPOINT_URL=http://localhost:9229
-    sleep 2
+    export TEST_COGNITO_ENDPOINT_URL=http://127.0.0.1:9229
+    export TEST_COGNITO_POOL_ID=local_0dPm2L0N
+    export TEST_COGNITO_CLIENT_ID=bs5obcfdxmvh7g6ldnqmeahae
+
+    for _ in {1..20}; do
+        if curl -fsS "http://127.0.0.1:9229/local_0dPm2L0N/.well-known/jwks.json" >/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    if ! curl -fsS "http://127.0.0.1:9229/local_0dPm2L0N/.well-known/jwks.json" >/dev/null; then
+        echo "FAILED to start cognito-local. See LOCAL/cognito-local.log"
+        exit 1
+    fi
+
     EXTRA_ARGS="-- --include-ignored"
     trap "kill $COGNITO_PID 2>/dev/null; cleanup" EXIT
 fi
