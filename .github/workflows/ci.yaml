@@ -142,31 +142,28 @@ jobs:
           SERVER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-server@${{ needs.docker.outputs.server_digest }}"
           WORKER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-worker@${{ needs.docker.outputs.worker_digest }}"
 
-          SERVER_TASK_DEF_ARN="$(aws ecs describe-services \
+          aws ecs describe-services \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --services "${{ secrets.ECS_SERVER_SERVICE }}" \
-            --query 'services[0].taskDefinition' \
-            --output text)"
+            > server-service.json
 
-          WORKER_TASK_DEF_ARN="$(aws ecs describe-services \
+          aws ecs describe-services \
             --cluster "${{ secrets.ECS_CLUSTER }}" \
             --services "${{ secrets.ECS_WORKER_SERVICE }}" \
-            --query 'services[0].taskDefinition' \
-            --output text)"
+            > worker-service.json
+
+          SERVER_TASK_DEF_ARN="$(jq -r '.services[0].taskDefinition // (.services[0].deployments[] | select(.status == "PRIMARY") | .taskDefinition) // empty' server-service.json | head -n 1)"
+          WORKER_TASK_DEF_ARN="$(jq -r '.services[0].taskDefinition // (.services[0].deployments[] | select(.status == "PRIMARY") | .taskDefinition) // empty' worker-service.json | head -n 1)"
 
           if [ -z "$SERVER_TASK_DEF_ARN" ] || [ "$SERVER_TASK_DEF_ARN" = "None" ]; then
             echo "Failed to resolve dal-server task definition from ECS service."
-            aws ecs describe-services \
-              --cluster "${{ secrets.ECS_CLUSTER }}" \
-              --services "${{ secrets.ECS_SERVER_SERVICE }}"
+            cat server-service.json
             exit 1
           fi
 
           if [ -z "$WORKER_TASK_DEF_ARN" ] || [ "$WORKER_TASK_DEF_ARN" = "None" ]; then
             echo "Failed to resolve dal-worker task definition from ECS service."
-            aws ecs describe-services \
-              --cluster "${{ secrets.ECS_CLUSTER }}" \
-              --services "${{ secrets.ECS_WORKER_SERVICE }}"
+            cat worker-service.json
             exit 1
           fi
 
