@@ -55,6 +55,7 @@ impl AppState {
             &cfg.aws_region,
             &cfg.cognito_user_pool_id,
             &cfg.cognito_client_id,
+            cfg.cognito_endpoint_url.as_deref(),
         );
 
         // SQS — optional endpoint override for LocalStack

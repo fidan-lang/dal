@@ -237,10 +237,10 @@
                     {/each}
                     {#if isOwner}
                         <a
-                            href="/dashboard/packages/{data.pkg.name}/owners"
+                            href="/dashboard/packages/{data.pkg.name}"
                             class="text-sm text-[var(--color-primary)] hover:underline"
                         >
-                            Manage owners →
+                            Manage package →
                         </a>
                     {/if}
                 </div>

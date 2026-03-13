@@ -2,10 +2,9 @@
     import type { ApiToken } from "$lib/api";
     import { DalApiError, tokens as tokensApi } from "$lib/api";
     import { timeAgo } from "$lib/utils";
-    import { untrack } from "svelte";
 
     let { data } = $props();
-    let tokenList = $state<ApiToken[]>(untrack(() => [...data.tokens]));
+    let tokenList = $state<ApiToken[]>([]);
     $effect(() => {
         tokenList = [...data.tokens];
     });

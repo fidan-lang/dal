@@ -4,6 +4,7 @@ Cargo.lock
 .env.local
 .env.*.local
 **/LOCAL
+.cognito/
 
 # Binaries
 *.exe

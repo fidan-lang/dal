@@ -1,24 +1,45 @@
 use crate::routes;
 use crate::state::AppState;
-use axum::{http::Method, Router};
+use axum::{
+    Router,
+    http::{HeaderValue, Method, header},
+};
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowHeaders, AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     sensitive_headers::SetSensitiveRequestHeadersLayer,
     trace::TraceLayer,
 };
 
 pub fn build_router(state: AppState) -> Router {
+    let allowed_origins = [
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "https://dal.fidan.dev",
+    ]
+    .into_iter()
+    .map(|origin| origin.parse::<HeaderValue>().unwrap())
+    .collect::<Vec<_>>();
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_methods([
             Method::GET,
             Method::POST,
+            Method::PATCH,
             Method::PUT,
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers(Any);
+        .allow_headers(AllowHeaders::list([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ORIGIN,
+        ]))
+        .allow_credentials(true);
 
     Router::new()
         .merge(routes::auth::router())

@@ -7,10 +7,52 @@
     let password = $state("");
     let error = $state("");
     let loading = $state(false);
+    let showResend = $state(false);
+    let resendLoading = $state(false);
+    let resendMessage = $state("");
+    let resendCooldown = $state(0);
+    let cooldownTimer: ReturnType<typeof setInterval> | null = null;
+
+    function startResendCooldown(seconds: number) {
+        resendCooldown = seconds;
+        if (cooldownTimer) clearInterval(cooldownTimer);
+        cooldownTimer = setInterval(() => {
+            resendCooldown = Math.max(0, resendCooldown - 1);
+            if (resendCooldown === 0 && cooldownTimer) {
+                clearInterval(cooldownTimer);
+                cooldownTimer = null;
+            }
+        }, 1000);
+    }
+
+    async function handleResendVerification() {
+        if (!username || resendLoading || resendCooldown > 0) return;
+
+        resendLoading = true;
+        resendMessage = "";
+        try {
+            const res = await auth.resendVerificationByUsername(
+                fetch,
+                username,
+            );
+            resendMessage =
+                res.message ||
+                "If your account exists, a verification email has been sent.";
+            startResendCooldown(30);
+        } catch {
+            resendMessage =
+                "If your account exists, a verification email has been sent.";
+            startResendCooldown(30);
+        } finally {
+            resendLoading = false;
+        }
+    }
 
     async function handleSubmit(e: Event) {
         e.preventDefault();
         error = "";
+        showResend = false;
+        resendMessage = "";
         loading = true;
         try {
             const user = await auth.login(fetch, username, password);
@@ -21,6 +63,7 @@
                 err instanceof DalApiError
                     ? err.message
                     : "Login failed. Please try again.";
+            showResend = error.toLowerCase().includes("verify your email");
         } finally {
             loading = false;
         }
@@ -49,6 +92,31 @@
                 >
                     {error}
                 </div>
+                {#if showResend}
+                    <div class="mt-3">
+                        <button
+                            type="button"
+                            onclick={handleResendVerification}
+                            disabled={resendLoading || resendCooldown > 0}
+                            class="w-full py-2.5 bg-[var(--color-primary)]/20 hover:bg-[var(--color-primary)]/30 border border-[var(--color-primary)]/40 disabled:opacity-60 text-[var(--color-primary-light)] font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+                        >
+                            {#if resendLoading}
+                                Resending verification email...
+                            {:else if resendCooldown > 0}
+                                Resend in {resendCooldown}s
+                            {:else}
+                                Resend verification email
+                            {/if}
+                        </button>
+                        {#if resendMessage}
+                            <p
+                                class="mt-2 text-xs text-[var(--color-text-muted)]"
+                            >
+                                {resendMessage}
+                            </p>
+                        {/if}
+                    </div>
+                {/if}
             {/if}
 
             <div>

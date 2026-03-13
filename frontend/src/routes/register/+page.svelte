@@ -8,6 +8,43 @@
     let error = $state("");
     let success = $state(false);
     let loading = $state(false);
+    let resendLoading = $state(false);
+    let resendMessage = $state("");
+    let resendCooldown = $state(0);
+    let cooldownTimer: ReturnType<typeof setInterval> | null = null;
+
+    function startResendCooldown(seconds: number) {
+        resendCooldown = seconds;
+        if (cooldownTimer) clearInterval(cooldownTimer);
+        cooldownTimer = setInterval(() => {
+            resendCooldown = Math.max(0, resendCooldown - 1);
+            if (resendCooldown === 0 && cooldownTimer) {
+                clearInterval(cooldownTimer);
+                cooldownTimer = null;
+            }
+        }, 1000);
+    }
+
+    async function handleResend() {
+        if (!email || resendCooldown > 0 || resendLoading) return;
+
+        resendLoading = true;
+        resendMessage = "";
+        try {
+            const res = await auth.resendVerification(fetch, email);
+            resendMessage =
+                res.message ||
+                "If your account exists, a new verification email has been sent.";
+            startResendCooldown(30);
+        } catch {
+            // Keep generic to avoid account enumeration details.
+            resendMessage =
+                "If your account exists, a new verification email has been sent.";
+            startResendCooldown(30);
+        } finally {
+            resendLoading = false;
+        }
+    }
 
     async function handleSubmit(e: Event) {
         e.preventDefault();
@@ -70,6 +107,27 @@
                         class="text-[var(--color-text)]">{email}</strong
                     >. Click the link in the email to activate your account.
                 </p>
+                <div class="mt-4">
+                    <button
+                        type="button"
+                        onclick={handleResend}
+                        disabled={resendLoading || resendCooldown > 0}
+                        class="w-full py-2.5 bg-[var(--color-primary)]/20 hover:bg-[var(--color-primary)]/30 border border-[var(--color-primary)]/40 disabled:opacity-60 text-[var(--color-primary-light)] font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+                    >
+                        {#if resendLoading}
+                            Resending...
+                        {:else if resendCooldown > 0}
+                            Resend in {resendCooldown}s
+                        {:else}
+                            Resend verification email
+                        {/if}
+                    </button>
+                </div>
+                {#if resendMessage}
+                    <p class="mt-3 text-xs text-[var(--color-text-muted)]">
+                        {resendMessage}
+                    </p>
+                {/if}
                 <a
                     href="/login"
                     class="mt-6 inline-block text-sm text-[var(--color-primary)] hover:underline"
@@ -107,13 +165,12 @@
                         type="text"
                         bind:value={username}
                         required
-                        pattern={"[a-z0-9][a-z0-9-]{1,63}"}
                         autocomplete="username"
                         class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
                         placeholder="your-username"
                     />
                     <p class="text-xs text-[var(--color-text-muted)] mt-1">
-                        Lowercase letters, numbers and hyphens only.
+                        Lowercase letters, numbers, hyphens, and underscores only.
                     </p>
                 </div>
 

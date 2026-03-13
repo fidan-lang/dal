@@ -1,5 +1,7 @@
 mod common;
 
+use dal_db::queries;
+
 // ── Auth endpoint smoke tests (no Cognito required) ───────────────────────────
 
 /// GET /auth/me without a session cookie → 401.
@@ -104,6 +106,19 @@ async fn register_login_me_logout_flow() {
     )
     .await;
     assert_eq!(status, 201, "register failed: {body}");
+
+    // Registration now requires email verification before login. For the
+    // integration test, mark the user verified directly in the test DB.
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://dal_test:test@localhost:5433/dal_test".to_string());
+    let db = dal_db::connect(&database_url).await.unwrap();
+    let user = queries::users::get_by_username(&db, &username)
+        .await
+        .unwrap()
+        .expect("registered user should exist");
+    queries::users::set_email_verified(&db, user.id)
+        .await
+        .unwrap();
 
     // Login
     let (status, body) = common::TestApp::unpack(

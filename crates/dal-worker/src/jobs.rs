@@ -2,13 +2,13 @@ use crate::email::MailjetClient;
 use anyhow::Context;
 use dal_db::PgPool;
 use serde_json::Value;
-use tracing::{error, info, warn};
+use tracing::warn;
 
 /// Dispatch a single job payload to the appropriate handler.
-pub async fn dispatch(payload: &Value, db: &PgPool, mail: &MailjetClient) -> anyhow::Result<()> {
+pub async fn dispatch(payload: &Value, _db: &PgPool, mail: &MailjetClient) -> anyhow::Result<()> {
     let kind = payload["kind"].as_str().unwrap_or("unknown");
     match kind {
-        "email_verify"   => handle_email_verify(payload, mail).await,
+        "email_verify" => handle_email_verify(payload, mail).await,
         "password_reset" => handle_password_reset(payload, mail).await,
         "publish_notify" => handle_publish_notify(payload, mail).await,
         other => {
@@ -19,15 +19,14 @@ pub async fn dispatch(payload: &Value, db: &PgPool, mail: &MailjetClient) -> any
 }
 
 async fn handle_email_verify(payload: &Value, mail: &MailjetClient) -> anyhow::Result<()> {
-    let email    = payload["email"].as_str().context("email")?;
+    let email = payload["email"].as_str().context("email")?;
     let username = payload["username"].as_str().context("username")?;
-    let token    = payload["token"].as_str().context("token")?;
+    let token = payload["token"].as_str().context("token")?;
 
-    let base_url = std::env::var("DAL_BASE_URL")
-        .unwrap_or_else(|_| "https://dal.fidan.dev".into());
-    let link = format!("{base_url}/auth/verify-email?token={token}");
+    let base_url = std::env::var("DAL_BASE_URL").unwrap_or_else(|_| "https://dal.fidan.dev".into());
+    let link = format!("{base_url}/verify-email?token={token}");
 
-    let subject   = "Verify your Dal account".to_string();
+    let subject = "Verify your Dal account".to_string();
     let text_body = format!(
         "Hi {username},\n\nVerify your email address:\n{link}\n\nThis link expires in 24 hours.\n\nThe Dal team"
     );
@@ -39,19 +38,19 @@ async fn handle_email_verify(payload: &Value, mail: &MailjetClient) -> anyhow::R
            <p>The Dal team</p>"#
     );
 
-    mail.send(email, username, &subject, &html_body, &text_body).await
+    mail.send(email, username, &subject, &html_body, &text_body)
+        .await
 }
 
 async fn handle_password_reset(payload: &Value, mail: &MailjetClient) -> anyhow::Result<()> {
-    let email    = payload["email"].as_str().context("email")?;
+    let email = payload["email"].as_str().context("email")?;
     let username = payload["username"].as_str().context("username")?;
-    let token    = payload["token"].as_str().context("token")?;
+    let token = payload["token"].as_str().context("token")?;
 
-    let base_url = std::env::var("DAL_BASE_URL")
-        .unwrap_or_else(|_| "https://dal.fidan.dev".into());
+    let base_url = std::env::var("DAL_BASE_URL").unwrap_or_else(|_| "https://dal.fidan.dev".into());
     let link = format!("{base_url}/reset-password?token={token}");
 
-    let subject   = "Reset your Dal password".to_string();
+    let subject = "Reset your Dal password".to_string();
     let text_body = format!(
         "Hi {username},\n\nReset your password:\n{link}\n\nThis link expires in 1 hour.\n\nIf you didn't request this, ignore this email.\n\nThe Dal team"
     );
@@ -63,7 +62,8 @@ async fn handle_password_reset(payload: &Value, mail: &MailjetClient) -> anyhow:
            <p>The Dal team</p>"#
     );
 
-    mail.send(email, username, &subject, &html_body, &text_body).await
+    mail.send(email, username, &subject, &html_body, &text_body)
+        .await
 }
 
 async fn handle_publish_notify(payload: &Value, mail: &MailjetClient) -> anyhow::Result<()> {
@@ -74,13 +74,13 @@ async fn handle_publish_notify(payload: &Value, mail: &MailjetClient) -> anyhow:
 
     if let Some(owners) = payload["owners"].as_array() {
         for owner in owners {
-            let email    = owner["email"].as_str().unwrap_or_default();
+            let email = owner["email"].as_str().unwrap_or_default();
             let username = owner["username"].as_str().unwrap_or_default();
-            let base_url = std::env::var("DAL_BASE_URL")
-                .unwrap_or_else(|_| "https://dal.fidan.dev".into());
+            let base_url =
+                std::env::var("DAL_BASE_URL").unwrap_or_else(|_| "https://dal.fidan.dev".into());
             let link = format!("{base_url}/packages/{package}");
 
-            let subject   = format!("{package} v{version} published");
+            let subject = format!("{package} v{version} published");
             let text_body = format!(
                 "Hi {username},\n\n{publisher} published {package} v{version}.\n\nView it at {link}\n\nThe Dal team"
             );
@@ -91,7 +91,10 @@ async fn handle_publish_notify(payload: &Value, mail: &MailjetClient) -> anyhow:
                    <p>The Dal team</p>"#
             );
 
-            if let Err(e) = mail.send(email, username, &subject, &html_body, &text_body).await {
+            if let Err(e) = mail
+                .send(email, username, &subject, &html_body, &text_body)
+                .await
+            {
                 warn!(error = %e, to = email, "failed to send publish notification");
             }
         }

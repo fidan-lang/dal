@@ -22,7 +22,8 @@ pub struct Claims {
     pub cognito_username: Option<String>,
     pub email:          Option<String>,
     pub email_verified: Option<bool>,
-    pub aud:            String,
+    pub aud:            Option<String>,
+    pub client_id:      Option<String>,
     pub iss:            String,
     pub exp:            i64,
     pub iat:            i64,
@@ -53,8 +54,16 @@ impl JwtValidator {
     /// * `region`    – AWS region, e.g. `eu-central-1`
     /// * `pool_id`   – Cognito User Pool ID, e.g. `eu-central-1_Xyz`
     /// * `client_id` – App client ID (audience)
-    pub fn new(region: &str, pool_id: &str, client_id: &str) -> Self {
-        let issuer = format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}");
+    pub fn new(
+        region: &str,
+        pool_id: &str,
+        client_id: &str,
+        endpoint_url: Option<&str>,
+    ) -> Self {
+        let issuer = match endpoint_url {
+            Some(base) => format!("{}/{}", base.trim_end_matches('/'), pool_id),
+            None => format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}"),
+        };
         let jwks_uri = format!("{issuer}/.well-known/jwks.json");
         Self {
             inner: Arc::new(Inner {
@@ -88,13 +97,23 @@ impl JwtValidator {
         };
 
         let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_audience(&[&self.inner.audience]);
-        validation.set_issuer(&[&self.inner.issuer]);
+        validation.validate_aud = false;
 
         let data = decode::<Claims>(token, &key, &validation)
             .map_err(|_| DalError::Unauthorized)?;
 
-        Ok(data.claims)
+        let claims = data.claims;
+        if claims.iss != self.inner.issuer {
+            return Err(DalError::Unauthorized);
+        }
+
+        let audience_matches = claims.aud.as_deref() == Some(self.inner.audience.as_str())
+            || claims.client_id.as_deref() == Some(self.inner.audience.as_str());
+        if !audience_matches {
+            return Err(DalError::Unauthorized);
+        }
+
+        Ok(claims)
     }
 
     async fn find_key(&self, kid: &str) -> Option<DecodingKey> {

@@ -4,10 +4,8 @@
     import PackageCard from "$lib/components/PackageCard.svelte";
     import Pagination from "$lib/components/Pagination.svelte";
     import { formatNumber } from "$lib/utils";
-    import { untrack } from "svelte";
-
     let { data } = $props();
-    let q = $state(untrack(() => data.q));
+    let q = $state("");
     $effect(() => {
         q = data.q;
     });

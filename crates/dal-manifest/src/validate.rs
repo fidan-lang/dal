@@ -16,7 +16,7 @@ pub fn validate_package_name(name: &str) -> Result<(), ManifestError> {
     }
     // All chars must be alphanumeric or '-'
     for &b in bytes {
-        if !b.is_ascii_alphanumeric() && b != b'-' {
+        if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
             return Err(ManifestError::InvalidName(name.into()));
         }
     }

@@ -28,7 +28,23 @@ async fn list_owners(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name))?;
     let owners = queries::packages::list_owners(&state.db, pkg.id).await?;
-    Ok(Json(serde_json::to_value(&owners).unwrap_or_default()))
+    let mut enriched = Vec::with_capacity(owners.len());
+
+    for owner in owners {
+        let user = queries::users::get_by_id(&state.db, owner.user_id)
+            .await?
+            .ok_or_else(|| DalError::UserNotFound(owner.user_id.to_string()))?;
+
+        enriched.push(json!({
+            "user_id": owner.user_id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "role": owner.role,
+            "added_at": owner.created_at,
+        }));
+    }
+
+    Ok(Json(Value::Array(enriched)))
 }
 
 #[derive(Deserialize)]
