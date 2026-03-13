@@ -24,6 +24,7 @@ EXTRA_ARGS=""
 if [[ "${1:-}" == "--with-cognito" ]]; then
     echo "==> Starting cognito-local..."
     mkdir -p LOCAL
+    export PORT=9229
     npx --yes cognito-local > LOCAL/cognito-local.log 2>&1 &
     COGNITO_PID=$!
     export TEST_COGNITO_ENDPOINT_URL=http://127.0.0.1:9229
@@ -39,6 +40,10 @@ if [[ "${1:-}" == "--with-cognito" ]]; then
 
     if ! curl -fsS "http://127.0.0.1:9229/local_0dPm2L0N/.well-known/jwks.json" >/dev/null; then
         echo "FAILED to start cognito-local. See LOCAL/cognito-local.log"
+        if [ -f LOCAL/cognito-local.log ]; then
+            echo "==> cognito-local.log"
+            tail -n 200 LOCAL/cognito-local.log || true
+        fi
         exit 1
     fi
 
