@@ -1,6 +1,8 @@
 use anyhow::Context;
 use aws_sdk_cognitoidentityprovider::{Client, types::AuthFlowType};
 use dal_common::error::DalError;
+use std::fmt::{Debug, Display};
+use tracing::{error, warn};
 
 /// Thin wrapper around the AWS Cognito Identity Provider SDK client.
 pub struct CognitoClient {
@@ -49,11 +51,19 @@ impl CognitoClient {
             .auth_parameters("PASSWORD", password)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(e.to_string()))?;
+            .map_err(|e| {
+                self.cognito_request_error("initiate_auth:user_password", Some(username), e)
+            })?;
 
-        let result = resp
-            .authentication_result()
-            .ok_or_else(|| DalError::Cognito("no authentication result".into()))?;
+        let result = resp.authentication_result().ok_or_else(|| {
+            warn!(
+                operation = "initiate_auth:user_password",
+                username, "cognito returned no authentication result"
+            );
+            DalError::Cognito(
+                "cognito initiate_auth:user_password returned no authentication result".into(),
+            )
+        })?;
 
         let access = result.access_token().unwrap_or_default().to_string();
         let id = result.id_token().unwrap_or_default().to_string();
@@ -72,11 +82,17 @@ impl CognitoClient {
             .auth_parameters("REFRESH_TOKEN", refresh_token)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(e.to_string()))?;
+            .map_err(|e| self.cognito_request_error("initiate_auth:refresh_token", None, e))?;
 
-        let result = resp
-            .authentication_result()
-            .ok_or_else(|| DalError::Cognito("no authentication result from refresh".into()))?;
+        let result = resp.authentication_result().ok_or_else(|| {
+            warn!(
+                operation = "initiate_auth:refresh_token",
+                "cognito returned no authentication result"
+            );
+            DalError::Cognito(
+                "cognito initiate_auth:refresh_token returned no authentication result".into(),
+            )
+        })?;
 
         let access = result.access_token().unwrap_or_default().to_string();
         let id = result.id_token().unwrap_or_default().to_string();
@@ -106,11 +122,17 @@ impl CognitoClient {
                     .value(email)
                     .build()
                     .context("build email attr")
-                    .map_err(|e| DalError::Cognito(e.to_string()))?,
+                    .map_err(|e| {
+                        self.cognito_context_error(
+                            "admin_create_user:build_email_attr",
+                            Some(username),
+                            e,
+                        )
+                    })?,
             )
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| self.cognito_request_error("admin_create_user", Some(username), e))?;
 
         // Promote to CONFIRMED by setting a permanent password
         self.inner
@@ -121,7 +143,9 @@ impl CognitoClient {
             .permanent(true)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| {
+                self.cognito_request_error("admin_set_user_password", Some(username), e)
+            })?;
 
         let sub = resp
             .user()
@@ -157,11 +181,13 @@ impl CognitoClient {
                     .value(email)
                     .build()
                     .context("build email attr")
-                    .map_err(|e| DalError::Cognito(e.to_string()))?,
+                    .map_err(|e| {
+                        self.cognito_context_error("sign_up:build_email_attr", Some(username), e)
+                    })?,
             )
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| self.cognito_request_error("sign_up", Some(username), e))?;
 
         let sub = resp.user_sub().to_string();
         Ok(sub)
@@ -175,7 +201,7 @@ impl CognitoClient {
             .username(username)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| self.cognito_request_error("admin_confirm_sign_up", Some(username), e))?;
         Ok(())
     }
 
@@ -193,7 +219,9 @@ impl CognitoClient {
             .permanent(true)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| {
+                self.cognito_request_error("admin_set_user_password", Some(username), e)
+            })?;
         Ok(())
     }
 
@@ -205,7 +233,7 @@ impl CognitoClient {
             .username(username)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| self.cognito_request_error("admin_delete_user", Some(username), e))?;
         Ok(())
     }
 
@@ -217,7 +245,51 @@ impl CognitoClient {
             .username(username)
             .send()
             .await
-            .map_err(|e| DalError::Cognito(format!("{e:#?}")))?;
+            .map_err(|e| {
+                self.cognito_request_error("admin_user_global_sign_out", Some(username), e)
+            })?;
         Ok(())
+    }
+
+    fn cognito_request_error<E>(
+        &self,
+        operation: &'static str,
+        username: Option<&str>,
+        err: E,
+    ) -> DalError
+    where
+        E: Debug + Display,
+    {
+        error!(
+            operation,
+            username = username.unwrap_or("<none>"),
+            pool_id = %self.pool_id,
+            client_id = %self.client_id,
+            error_display = %err,
+            error_debug = ?err,
+            "cognito sdk request failed"
+        );
+        DalError::Cognito(format!("cognito {operation} failed"))
+    }
+
+    fn cognito_context_error<E>(
+        &self,
+        operation: &'static str,
+        username: Option<&str>,
+        err: E,
+    ) -> DalError
+    where
+        E: Debug + Display,
+    {
+        error!(
+            operation,
+            username = username.unwrap_or("<none>"),
+            pool_id = %self.pool_id,
+            client_id = %self.client_id,
+            error_display = %err,
+            error_debug = ?err,
+            "cognito request setup failed"
+        );
+        DalError::Cognito(format!("cognito {operation} failed"))
     }
 }

@@ -3,6 +3,7 @@
 
 # Force LF for source code and configs
 *.py text eol=lf
+*.rs text eol=lf
 *.dart text eol=lf
 *.js text eol=lf
 *.ts text eol=lf
@@ -12,6 +13,7 @@
 *.md text eol=lf
 *.sh text eol=lf
 *.sql text eol=lf
+.githooks/* text eol=lf
 
 # Windows specific scripts
 *.bat text eol=crlf

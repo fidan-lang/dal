@@ -137,6 +137,20 @@ LOCAL\start-dal-worker.ps1
 
 The sink writes captured Mailjet-compatible requests to `LOCAL/mail-sink.log`.
 
+### 9. Install Git hooks
+
+To automatically run `cargo fmt --all` before each commit for staged Rust files:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+On Windows:
+
+```powershell
+scripts\install-git-hooks.ps1
+```
+
 ---
 
 ## API Reference
