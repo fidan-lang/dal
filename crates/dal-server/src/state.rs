@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use aws_config::{BehaviorVersion, Region};
 use dal_auth::{CognitoClient, JwtValidator};
 use dal_db::PgPool;
 use dal_storage::StorageClient;
+use tracing::info;
 
 use crate::config::Config;
 use crate::middleware::rate_limit::RateLimiter;
@@ -27,17 +29,18 @@ impl AppState {
         let db = dal_db::connect(&cfg.database_url).await?;
         dal_db::migrate(&db).await?;
 
-        // Shared AWS config — explicit region, shared credentials
-        let aws_cfg = aws_config::from_env()
-            .region(aws_config::meta::region::RegionProviderChain::first_try(
-                aws_config::Region::new(cfg.aws_region.clone()),
-            ))
+        log_aws_runtime_probe("dal-server");
+
+        // Build one shared AWS SDK config for all AWS clients.
+        let aws_cfg = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new(cfg.aws_region.clone()))
             .load()
             .await;
 
         // Storage
         let storage =
-            StorageClient::new(cfg.s3_bucket.clone(), cfg.s3_endpoint_url.clone()).await?;
+            StorageClient::new(&aws_cfg, cfg.s3_bucket.clone(), cfg.s3_endpoint_url.clone())
+                .await?;
 
         // Cognito
         let cognito = CognitoClient::from_sdk_config(
@@ -79,4 +82,26 @@ impl AppState {
             cfg: Arc::new(cfg.clone()),
         })
     }
+}
+
+fn log_aws_runtime_probe(component: &str) {
+    info!(
+        component,
+        aws_region = std::env::var("AWS_REGION")
+            .ok()
+            .as_deref()
+            .unwrap_or("<unset>"),
+        aws_default_region_present = env_present("AWS_DEFAULT_REGION"),
+        aws_access_key_id_present = env_present("AWS_ACCESS_KEY_ID"),
+        aws_session_token_present = env_present("AWS_SESSION_TOKEN"),
+        aws_container_credentials_relative_uri_present =
+            env_present("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"),
+        aws_container_credentials_full_uri_present =
+            env_present("AWS_CONTAINER_CREDENTIALS_FULL_URI"),
+        "aws runtime credential probe"
+    );
+}
+
+fn env_present(key: &str) -> bool {
+    std::env::var_os(key).is_some()
 }

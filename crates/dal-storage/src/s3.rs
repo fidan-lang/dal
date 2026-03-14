@@ -9,14 +9,17 @@ pub struct StorageClient {
 }
 
 impl StorageClient {
-    pub async fn new(bucket: String, endpoint_url: Option<String>) -> anyhow::Result<Self> {
-        let mut loader = aws_config::from_env();
+    pub async fn new(
+        aws_cfg: &aws_config::SdkConfig,
+        bucket: String,
+        endpoint_url: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let mut builder = aws_sdk_s3::config::Builder::from(aws_cfg);
         if let Some(url) = endpoint_url {
             // LocalStack / MinIO override
-            loader = loader.endpoint_url(url);
+            builder = builder.endpoint_url(url);
         }
-        let config = loader.load().await;
-        let s3_config = aws_sdk_s3::config::Builder::from(&config)
+        let s3_config = builder
             .force_path_style(true) // required for LocalStack
             .build();
         let inner = Client::from_conf(s3_config);
