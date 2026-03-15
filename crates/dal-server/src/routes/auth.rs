@@ -7,6 +7,7 @@ use axum::{
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use url::Url;
 use uuid::Uuid;
 
 use dal_auth::api_token::hash_token as sha256_hex;
@@ -34,8 +35,25 @@ fn cookie_attrs(path: &str, max_age: i64, base_url: &str) -> String {
     } else {
         ""
     };
+    let domain = cookie_domain_attr(base_url);
 
-    format!("{secure}; HttpOnly; SameSite=Strict; Path={path}; Max-Age={max_age}")
+    format!("{secure}{domain}; HttpOnly; SameSite=Strict; Path={path}; Max-Age={max_age}")
+}
+
+fn cookie_domain_attr(base_url: &str) -> String {
+    let Ok(url) = Url::parse(base_url.trim()) else {
+        return String::new();
+    };
+
+    let Some(host) = url.host_str() else {
+        return String::new();
+    };
+
+    if host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok() {
+        return String::new();
+    }
+
+    format!("; Domain={host}")
 }
 
 // ── Register ─────────────────────────────────────────────────────────────────

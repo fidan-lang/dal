@@ -42,3 +42,4 @@ aws-config.workspace = true
 aws-sdk-sqs.workspace = true
 hex.workspace = true
 sqlx.workspace = true
+url.workspace = true
