@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -57,13 +58,55 @@ jobs:
       - name: Run dal-server integration stack
         run: bash ./scripts/test.sh --with-cognito
 
+  # ─── Detect backend changes that warrant an ECS deploy ─────────────────────
+  changes:
+    name: Detect backend changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.manual.outputs.backend || steps.filter.outputs.backend }}
+
+    steps:
+      - name: Mark manual dispatch as deployable
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "backend=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      - name: Filter backend paths
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'docker-compose.yml'
+              - 'docker-compose.test.yml'
+              - 'crates/**'
+              - 'migrations/**'
+              - 'scripts/test.sh'
+              - 'scripts/test.bat'
+              - 'scripts/localstack-init.sh'
+              - 'scripts/localstack-init-test.sh'
+              - '.github/workflows/ci.yaml'
+
   # ─── Build & Push Docker images (main branch only) ──────────────────────────
   docker:
     name: Build & Push Docker
-    needs: test
+    needs: [test, changes]
     runs-on: ubuntu-latest
     environment: aws-deploy
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref == 'refs/heads/main' &&
+       github.event_name == 'push' &&
+       needs.changes.outputs.backend == 'true')
     outputs:
       server_digest: ${{ steps.build-server.outputs.digest }}
       worker_digest: ${{ steps.build-worker.outputs.digest }}
@@ -123,7 +166,11 @@ jobs:
     needs: docker
     runs-on: ubuntu-latest
     environment: aws-deploy
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref == 'refs/heads/main' &&
+       github.event_name == 'push' &&
+       needs.docker.result == 'success')
     permissions:
       id-token: write
       contents: read
