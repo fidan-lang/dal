@@ -5,9 +5,28 @@
     let displayName = $state($currentUser?.display_name ?? "");
     let bio = $state($currentUser?.bio ?? "");
     let websiteUrl = $state($currentUser?.website_url ?? "");
+    let lastHydratedProfile = $state<string | null>(null);
     let success = $state(false);
     let error = $state("");
     let loading = $state(false);
+
+    $effect(() => {
+        if (!$currentUser) return;
+
+        const profileSignature = JSON.stringify([
+            $currentUser.id,
+            $currentUser.display_name ?? "",
+            $currentUser.bio ?? "",
+            $currentUser.website_url ?? "",
+        ]);
+
+        if (profileSignature === lastHydratedProfile) return;
+
+        displayName = $currentUser.display_name ?? "";
+        bio = $currentUser.bio ?? "";
+        websiteUrl = $currentUser.website_url ?? "";
+        lastHydratedProfile = profileSignature;
+    });
 
     async function handleSubmit(e: Event) {
         e.preventDefault();
@@ -15,10 +34,13 @@
         success = false;
         loading = true;
         try {
+            const nextDisplayName = displayName.trim();
+            const nextBio = bio.trim();
+            const nextWebsiteUrl = websiteUrl.trim();
             const updated = await users.updateProfile(fetch, {
-                display_name: displayName || undefined,
-                bio: bio || undefined,
-                website_url: websiteUrl || undefined,
+                display_name: nextDisplayName,
+                bio: nextBio,
+                website_url: nextWebsiteUrl,
             });
             currentUser.set(updated);
             success = true;

@@ -5,7 +5,6 @@
 	import Footer from "$lib/components/Footer.svelte";
 	import Nav from "$lib/components/Nav.svelte";
 	import { authLoading, currentUser } from "$lib/stores/auth";
-	import { onMount } from "svelte";
 	import "../app.css";
 
 	let { data, children } = $props();
@@ -14,7 +13,7 @@
 		env.PUBLIC_CANONICAL_BASE_URL ?? "https://dal.fidan.dev";
 	let canonical = $derived(`${CANONICAL_BASE_URL}${page.url.pathname}`);
 
-	onMount(() => {
+	$effect(() => {
 		currentUser.set(data.user ?? null);
 		authLoading.set(false);
 	});

@@ -1,6 +1,7 @@
 use crate::{email::MailjetClient, jobs};
 use dal_db::PgPool;
 use std::time::Duration;
+use tokio::sync::watch;
 use tracing::{error, warn};
 
 /// Long-running SQS poll loop.
@@ -9,16 +10,28 @@ pub async fn run(
     queue_url: String,
     db: PgPool,
     mail: MailjetClient,
+    mut shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     loop {
-        let resp = match sqs
+        if *shutdown.borrow() {
+            tracing::info!("dal-worker shutdown requested before poll — exiting");
+            return Ok(());
+        }
+
+        let receive = sqs
             .receive_message()
             .queue_url(&queue_url)
             .max_number_of_messages(10)
             .wait_time_seconds(20) // long-polling
-            .send()
-            .await
-        {
+            .send();
+
+        let resp = match tokio::select! {
+            _ = shutdown.changed() => {
+                tracing::info!("dal-worker shutdown requested during poll — exiting");
+                return Ok(());
+            }
+            resp = receive => resp,
+        } {
             Ok(r) => r,
             Err(e) => {
                 error!(error = %e, "SQS receive_message failed — retrying in 5s");
@@ -67,6 +80,11 @@ pub async fn run(
                         .await;
                 }
             }
+        }
+
+        if *shutdown.borrow() {
+            tracing::info!("dal-worker completed current batch after shutdown request — exiting");
+            return Ok(());
         }
     }
 }

@@ -90,10 +90,10 @@ pub async fn update_profile(
 ) -> DalResult<User> {
     let user = sqlx::query_as::<_, User>(
         "UPDATE users
-         SET display_name = COALESCE($2, display_name),
-             bio          = COALESCE($3, bio),
-             website      = COALESCE($4, website),
-             avatar_url   = COALESCE($5, avatar_url),
+         SET display_name = CASE WHEN $2 IS NULL THEN display_name ELSE NULLIF($2, '') END,
+             bio          = CASE WHEN $3 IS NULL THEN bio ELSE NULLIF($3, '') END,
+             website      = CASE WHEN $4 IS NULL THEN website ELSE NULLIF($4, '') END,
+             avatar_url   = CASE WHEN $5 IS NULL THEN avatar_url ELSE NULLIF($5, '') END,
              updated_at   = now()
          WHERE id = $1
          RETURNING *",

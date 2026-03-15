@@ -42,9 +42,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mailjet = email::MailjetClient::from_env()?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_tx.send(true);
+    });
 
     info!("Dal worker starting — polling {queue_url}");
-    worker::run(sqs, queue_url, db, mailjet).await
+    worker::run(sqs, queue_url, db, mailjet, shutdown_rx).await
 }
 
 fn log_aws_runtime_probe(component: &str) {
@@ -63,4 +69,29 @@ fn log_aws_runtime_probe(component: &str) {
             std::env::var_os("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_some(),
         "aws runtime credential probe"
     );
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            signal.recv().await;
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    info!("Shutdown signal received — stopping dal-worker polling");
 }

@@ -1,3 +1,7 @@
+<script lang="ts">
+	import { currentUser } from "$lib/stores/auth";
+</script>
+
 <footer
     class="border-t border-[var(--color-border)] bg-[var(--color-surface-2)] mt-16"
 >
@@ -39,17 +43,37 @@
             <div>
                 <h4 class="text-sm font-semibold text-white mb-3">Account</h4>
                 <ul class="space-y-2 text-sm text-[var(--color-text-muted)]">
-                    <li>
-                        <a
-                            href="/register"
-                            class="hover:text-[var(--color-text)]">Sign up</a
-                        >
-                    </li>
-                    <li>
-                        <a href="/login" class="hover:text-[var(--color-text)]"
-                            >Sign in</a
-                        >
-                    </li>
+                    {#if $currentUser}
+                        <li>
+                            <a
+                                href="/dashboard"
+                                class="hover:text-[var(--color-text)]"
+                                >Dashboard</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="/settings"
+                                class="hover:text-[var(--color-text)]"
+                                >Settings</a
+                            >
+                        </li>
+                    {:else}
+                        <li>
+                            <a
+                                href="/register"
+                                class="hover:text-[var(--color-text)]"
+                                >Sign up</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="/login"
+                                class="hover:text-[var(--color-text)]"
+                                >Sign in</a
+                            >
+                        </li>
+                    {/if}
                     <li>
                         <a
                             href="/settings/tokens"
