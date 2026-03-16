@@ -3,9 +3,14 @@ import type { Handle, RequestEvent } from "@sveltejs/kit";
 
 const ACCESS_COOKIE = "dal_access_token";
 const REFRESH_COOKIE = "dal_refresh_token";
+type RefreshResult = "refreshed" | "unauthorized" | "error";
 
 export const handle: Handle = async ({ event, resolve }) => {
   event.locals.user = null;
+
+  if (!shouldResolveSession(event.url.pathname)) {
+    return resolve(event);
+  }
 
   const accessToken = event.cookies.get(ACCESS_COOKIE);
   const refreshToken = event.cookies.get(REFRESH_COOKIE);
@@ -13,9 +18,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     let user = await fetchCurrentUser(event.fetch, buildCookieHeader(event));
     if (!user && refreshToken) {
       const refreshed = await refreshSession(event);
-      if (refreshed) {
+      if (refreshed === "refreshed") {
         user = await fetchCurrentUser(event.fetch, buildCookieHeader(event));
-      } else {
+      } else if (refreshed === "unauthorized") {
         clearSessionCookies(event);
       }
     }
@@ -25,6 +30,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   return resolve(event);
 };
+
+function shouldResolveSession(pathname: string): boolean {
+  return !(
+    pathname.startsWith("/_app/") ||
+    pathname.startsWith("/favicon.") ||
+    pathname === "/robots.txt" ||
+    pathname === "/manifest.json" ||
+    pathname === "/site.webmanifest"
+  );
+}
 
 async function fetchCurrentUser(
   fetchFn: typeof fetch,
@@ -47,9 +62,9 @@ async function fetchCurrentUser(
   }
 }
 
-async function refreshSession(event: RequestEvent): Promise<boolean> {
+async function refreshSession(event: RequestEvent): Promise<RefreshResult> {
   const cookieHeader = buildCookieHeader(event);
-  if (!cookieHeader) return false;
+  if (!cookieHeader) return "error";
 
   try {
     const response = await event.fetch(`${API_BASE}/auth/refresh`, {
@@ -58,13 +73,13 @@ async function refreshSession(event: RequestEvent): Promise<boolean> {
     });
 
     if (!response.ok) {
-      return false;
+      return response.status === 401 ? "unauthorized" : "error";
     }
 
     applyCookiesFromRefreshResponse(event, response.headers);
-    return true;
+    return "refreshed";
   } catch {
-    return false;
+    return "error";
   }
 }
 
