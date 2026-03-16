@@ -61,6 +61,14 @@ pub async fn get_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<Package>> {
     Ok(pkg)
 }
 
+pub async fn delete(pool: &PgPool, id: Uuid) -> DalResult<bool> {
+    let res = sqlx::query("DELETE FROM packages WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
 pub async fn name_exists(pool: &PgPool, name: &str) -> DalResult<bool> {
     let row: (bool,) =
         sqlx::query_as("SELECT EXISTS(SELECT 1 FROM packages WHERE lower(name) = lower($1))")

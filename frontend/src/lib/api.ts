@@ -585,3 +585,14 @@ export const tokens = {
   delete: (f: FetchFn, id: string) =>
     request<void>(f, "DELETE", `/tokens/${id}`),
 };
+
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+export const admin = {
+  deletePackage: (f: FetchFn, name: string) =>
+    request<{ message: string }>(
+      f,
+      "DELETE",
+      `/admin/packages/${encodeURIComponent(name)}`,
+    ),
+};

@@ -74,7 +74,7 @@ async fn invite_owner(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
+    if !actor.is_admin() && !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 
@@ -230,7 +230,7 @@ async fn remove_owner(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
+    if !actor.is_admin() && !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 
@@ -248,7 +248,10 @@ async fn remove_owner(
         ));
     }
 
-    if target_owner.is_some_and(|owner| owner.role == "owner") && owner_count <= 1 {
+    if !actor.is_admin()
+        && target_owner.is_some_and(|owner| owner.role == "owner")
+        && owner_count <= 1
+    {
         return Err(DalError::Validation(
             "cannot remove the last owner of a package".into(),
         ));
@@ -291,7 +294,7 @@ async fn transfer_ownership(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
+    if !actor.is_admin() && !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 

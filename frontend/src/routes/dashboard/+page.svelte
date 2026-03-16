@@ -50,6 +50,12 @@
           Welcome back, <span class="text-[var(--color-text)]"
             >{$currentUser.display_name ?? $currentUser.username}</span
           >
+          {#if $currentUser.is_admin}
+            <span
+              class="ml-2 text-xs text-[var(--color-primary-light)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 px-2 py-0.5 rounded"
+              >platform admin</span
+            >
+          {/if}
           {#if !$currentUser.email_verified}
             <span
               class="ml-2 text-xs text-[var(--color-warning)] bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-2 py-0.5 rounded"
@@ -60,6 +66,15 @@
       {/if}
     </div>
   </div>
+
+  {#if $currentUser?.is_admin}
+    <div
+      class="mb-8 px-4 py-3 bg-[var(--color-primary)]/8 border border-[var(--color-primary)]/20 rounded-[var(--radius-md)] text-sm text-[var(--color-text)]"
+    >
+      Your account has platform admin powers. You can moderate any package from
+      its package page or management screen, even if you are not an owner.
+    </div>
+  {/if}
 
   {#if pendingInvites.length || inviteError}
     <section class="mb-10">

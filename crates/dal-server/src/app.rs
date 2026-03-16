@@ -61,6 +61,7 @@ pub fn build_router(state: AppState) -> Router {
         .allow_credentials(true);
 
     Router::new()
+        .merge(routes::admin::router())
         .merge(routes::auth::router())
         .merge(routes::users::router())
         .merge(routes::packages::router())

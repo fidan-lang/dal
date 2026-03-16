@@ -101,7 +101,9 @@ async fn download(
 /// Publish a new package version.
 ///
 /// Expects `multipart/form-data` with a single field `archive` containing
-/// the `.tar.gz` bytes. The archive must contain `dal.toml` at its root.
+/// the `.tar.gz` bytes. The archive must contain a canonical
+/// `{package}-{version}/...` layout with `dal.toml` at the package root and
+/// `src/init.fdn` present as the required package entry point.
 async fn publish(
     State(state): State<AppState>,
     actor: AuthActor,
@@ -147,6 +149,27 @@ async fn publish(
     }
 
     let version_str = manifest.package.version.clone();
+    let expected_root_dir = format!("{}-{version_str}", manifest.package.name);
+    if info.root_dir != expected_root_dir {
+        return Err(DalError::ArchiveInvalid(format!(
+            "archive root directory must be `{expected_root_dir}`"
+        )));
+    }
+
+    let readme = match manifest.package.readme.as_deref() {
+        Some(path) => {
+            let bytes =
+                dal_storage::extract_file(&bytes, &info.root_dir, path)?.ok_or_else(|| {
+                    DalError::ManifestInvalid(format!(
+                        "declared readme `{path}` not found in archive"
+                    ))
+                })?;
+            Some(String::from_utf8(bytes).map_err(|_| {
+                DalError::ManifestInvalid(format!("declared readme `{path}` is not valid UTF-8"))
+            })?)
+        }
+        None => info.readme_bytes.and_then(|b| String::from_utf8(b).ok()),
+    };
 
     let user = &actor.user;
     // Get or create the package record
@@ -154,7 +177,7 @@ async fn publish(
         Some(p) => {
             actor.require_scope(dal_auth::PUBLISH_UPDATE_SCOPE)?;
             // Ownership check
-            if !queries::packages::is_member(&state.db, p.id, user.id).await? {
+            if !actor.is_admin() && !queries::packages::is_member(&state.db, p.id, user.id).await? {
                 return Err(DalError::Forbidden);
             }
             p
@@ -197,7 +220,6 @@ async fn publish(
 
     // Persist version record
     let ver_id = Uuid::new_v4();
-    let readme = info.readme_bytes.and_then(|b| String::from_utf8(b).ok());
 
     queries::versions::create(
         &state.db,
@@ -271,7 +293,7 @@ async fn yank(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
+    if !actor.is_admin() && !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 
@@ -294,7 +316,7 @@ async fn unyank(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
+    if !actor.is_admin() && !queries::packages::is_member(&state.db, pkg.id, actor.user.id).await? {
         return Err(DalError::Forbidden);
     }
 

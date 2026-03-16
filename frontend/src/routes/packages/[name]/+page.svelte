@@ -64,6 +64,9 @@
         !!$currentUser &&
             ownersList.some((o) => o.username === $currentUser?.username),
     );
+    let canManagePackage = $derived(
+        !!$currentUser && (isOwner || $currentUser.is_admin),
+    );
 
     function hostnameFor(url: string): string {
         try {
@@ -242,12 +245,16 @@
                             </div>
                         </div>
                     {/each}
-                    {#if isOwner}
+                    {#if canManagePackage}
                         <a
                             href="/dashboard/packages/{data.pkg.name}"
                             class="text-sm text-[var(--color-primary)] hover:underline"
                         >
-                            Manage package →
+                            {#if $currentUser?.is_admin && !isOwner}
+                                Moderate package →
+                            {:else}
+                                Manage package →
+                            {/if}
                         </a>
                     {/if}
                 </div>

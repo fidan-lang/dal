@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import {
   expect,
   test,
@@ -85,10 +87,13 @@ async function waitForMailToken(
 
 function createSmokeArchive(packageName: string) {
   const dir = mkdtempSync(path.join(tmpdir(), "dal-playwright-"));
-  const srcDir = path.join(dir, "src");
+  const rootDirName = `${packageName}-0.1.0`;
+  const packageDir = path.join(dir, rootDirName);
+  const srcDir = path.join(packageDir, "src");
   const archivePath = path.join(dir, `${packageName}-0.1.0.tar.gz`);
-  const manifestPath = path.join(dir, "dal.toml");
-  const sourcePath = path.join(srcDir, "main.fdn");
+  const manifestPath = path.join(packageDir, "dal.toml");
+  const readmePath = path.join(packageDir, "README.md");
+  const sourcePath = path.join(srcDir, "init.fdn");
   mkdirSync(srcDir, { recursive: true });
 
   const baseManifest = readFileSync(
@@ -97,6 +102,10 @@ function createSmokeArchive(packageName: string) {
   );
   const mainSource = readFileSync(
     path.join(repoRoot, "LOCAL", "publish-smoke", "src", "main.fdn"),
+    "utf8",
+  );
+  const readme = readFileSync(
+    path.join(repoRoot, "LOCAL", "publish-smoke", "README.md"),
     "utf8",
   );
 
@@ -108,15 +117,9 @@ function createSmokeArchive(packageName: string) {
     ),
   );
   writeFileSync(sourcePath, mainSource, { flag: "w" });
+  writeFileSync(readmePath, readme, { flag: "w" });
 
-  execFileSync("tar", [
-    "-czf",
-    archivePath,
-    "-C",
-    dir,
-    "dal.toml",
-    "src/main.fdn",
-  ]);
+  execFileSync("tar", ["-czf", archivePath, "-C", dir, rootDirName]);
 
   return {
     archivePath,

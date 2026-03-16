@@ -79,6 +79,13 @@
                                 {$currentUser.username[0]}
                             </span>
                             <span>{$currentUser.username}</span>
+                            {#if $currentUser.is_admin}
+                                <span
+                                    class="px-2 py-0.5 rounded-full border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-primary-light)]"
+                                >
+                                    Admin
+                                </span>
+                            {/if}
                             <svg
                                 class="w-4 h-4 text-[var(--color-text-muted)]"
                                 fill="none"
@@ -113,6 +120,13 @@
                                     class="block px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-3)]"
                                     role="menuitem">API Tokens</a
                                 >
+                                {#if $currentUser.is_admin}
+                                    <div
+                                        class="px-4 py-2 text-xs text-[var(--color-primary-light)] bg-[var(--color-primary)]/5 border-y border-[var(--color-primary)]/10"
+                                    >
+                                        Platform admin access enabled
+                                    </div>
+                                {/if}
                                 <hr class="border-[var(--color-border)] my-1" />
                                 <button
                                     onclick={handleLogout}
@@ -217,10 +231,19 @@
                 >
             {/each}
             {#if $currentUser}
-                <a
-                    href="/dashboard"
-                    class="text-sm text-[var(--color-text-muted)]">Dashboard</a
-                >
+                <div class="flex items-center gap-2">
+                    <a
+                        href="/dashboard"
+                        class="text-sm text-[var(--color-text-muted)]">Dashboard</a
+                    >
+                    {#if $currentUser.is_admin}
+                        <span
+                            class="px-2 py-0.5 rounded-full border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-primary-light)]"
+                        >
+                            Admin
+                        </span>
+                    {/if}
+                </div>
                 <a
                     href="/settings"
                     class="text-sm text-[var(--color-text-muted)]">Settings</a

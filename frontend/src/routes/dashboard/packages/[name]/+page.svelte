@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import {
+    admin as adminApi,
     DalApiError,
     owners as ownersApi,
     versions as versionsApi,
@@ -17,7 +18,9 @@
   let error = $state("");
   let success = $state("");
   let busyAction = $state<string | null>(null);
-  let canManageOwners = $derived(data.currentRole === "owner");
+  let canManageOwners = $derived(
+    data.currentRole === "owner" || data.isAdmin,
+  );
 
   $effect(() => {
     ownersList = data.owners;
@@ -104,6 +107,25 @@
       fail(err, "Failed to transfer ownership.");
     }
   }
+
+  async function deletePackage() {
+    if (
+      !window.confirm(
+        `Delete ${data.pkg.name} from Dal permanently? This removes all versions and stored archives.`,
+      )
+    ) {
+      return;
+    }
+
+    begin("delete-package");
+
+    try {
+      await adminApi.deletePackage(fetch, data.pkg.name);
+      await goto("/packages");
+    } catch (err) {
+      fail(err, "Failed to delete package.");
+    }
+  }
 </script>
 
 <svelte:head>
@@ -122,6 +144,20 @@
       <h1 class="mt-3 text-3xl font-bold text-white font-mono">
         Manage {data.pkg.name}
       </h1>
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <span
+          class="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2 py-0.5 rounded"
+        >
+          access: {data.currentRole}
+        </span>
+        {#if data.isAdmin}
+          <span
+            class="text-xs text-[var(--color-primary-light)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 px-2 py-0.5 rounded"
+          >
+            platform admin
+          </span>
+        {/if}
+      </div>
       {#if data.pkg.description}
         <p class="mt-2 text-[var(--color-text-muted)]">
           {data.pkg.description}
@@ -216,7 +252,7 @@
                 )}
               </p>
             </div>
-            {#if canManageOwners && ownersList.length > 1}
+            {#if canManageOwners && (ownersList.length > 1 || data.isAdmin)}
               <button
                 type="button"
                 disabled={busyAction === `remove:${owner.username}`}
@@ -324,6 +360,30 @@
             You can publish and manage versions, but only owners can change
             package membership.
           </p>
+        </section>
+      {/if}
+
+      {#if data.isAdmin}
+        <section
+          class="p-5 bg-[var(--color-danger)]/8 border border-[var(--color-danger)]/30 rounded-[var(--radius-lg)]"
+        >
+          <h3 class="text-base font-semibold text-white">
+            Platform moderation
+          </h3>
+          <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+            As a platform admin, you can permanently remove this package from
+            the registry if it is malicious or violates policy.
+          </p>
+          <button
+            type="button"
+            disabled={busyAction === "delete-package"}
+            onclick={deletePackage}
+            class="mt-4 w-full py-2.5 bg-[var(--color-danger)] hover:bg-[var(--color-danger)]/80 disabled:opacity-60 text-white text-sm font-medium rounded-[var(--radius-md)] transition-colors"
+          >
+            {busyAction === "delete-package"
+              ? "Deleting..."
+              : "Delete package permanently"}
+          </button>
         </section>
       {/if}
     </div>

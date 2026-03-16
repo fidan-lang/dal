@@ -18,7 +18,7 @@ export const load: PageServerLoad = async ({ fetch, params, parent }) => {
     const membership = ownerList.find(
       (owner) => owner.username === user.username,
     );
-    if (!membership) {
+    if (!membership && !user.is_admin) {
       error(403, "You do not manage this package");
     }
 
@@ -27,7 +27,8 @@ export const load: PageServerLoad = async ({ fetch, params, parent }) => {
       versions: versionList,
       owners: ownerList,
       currentUsername: user.username,
-      currentRole: membership.role,
+      currentRole: membership?.role ?? "admin",
+      isAdmin: user.is_admin,
     };
   } catch (err) {
     if (err instanceof Response) {

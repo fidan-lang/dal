@@ -30,7 +30,9 @@ async function readCredentials() {
 
 async function createSmokeArchive(packageName) {
   const dir = await mkdtemp(path.join(tmpdir(), "dal-live-smoke-"));
-  const srcDir = path.join(dir, "src");
+  const rootDirName = `${packageName}-0.1.0`;
+  const packageDir = path.join(dir, rootDirName);
+  const srcDir = path.join(packageDir, "src");
   const archivePath = path.join(dir, `${packageName}-0.1.0.tar.gz`);
   await mkdir(srcDir, { recursive: true });
 
@@ -42,15 +44,20 @@ async function createSmokeArchive(packageName) {
     path.join(repoRoot, "LOCAL", "publish-smoke", "src", "main.fdn"),
     "utf8",
   );
+  const readme = await readFile(
+    path.join(repoRoot, "LOCAL", "publish-smoke", "README.md"),
+    "utf8",
+  );
 
   await writeFile(
-    path.join(dir, "dal.toml"),
+    path.join(packageDir, "dal.toml"),
     baseManifest.replace('name = "playwright-smoke"', `name = "${packageName}"`),
     "utf8",
   );
-  await writeFile(path.join(srcDir, "main.fdn"), mainSource, "utf8");
+  await writeFile(path.join(srcDir, "init.fdn"), mainSource, "utf8");
+  await writeFile(path.join(packageDir, "README.md"), readme, "utf8");
 
-  execFileSync("tar", ["-czf", archivePath, "-C", dir, "dal.toml", "src/main.fdn"]);
+  execFileSync("tar", ["-czf", archivePath, "-C", dir, rootDirName]);
 
   return {
     archivePath,
