@@ -242,7 +242,7 @@ async fn publish(
         Ok(version) => version,
         Err(err) => {
             cleanup_failed_publish(&state, pkg.id, &s3_key, created_new_package, None).await;
-            return Err(err.into());
+            return Err(err);
         }
     };
 
@@ -270,7 +270,7 @@ async fn publish(
             Some(created_version.id),
         )
         .await;
-        return Err(err.into());
+        return Err(err);
     }
 
     // Audit log

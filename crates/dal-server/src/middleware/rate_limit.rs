@@ -91,14 +91,12 @@ fn is_rate_limited_auth_path(path: &str) -> bool {
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<IpAddr> {
     for header_name in ["x-forwarded-for", "x-real-ip"] {
-        if let Some(header) = headers.get(header_name) {
-            if let Ok(raw) = header.to_str() {
-                if let Some(candidate) = raw.split(',').next().map(str::trim)
-                    && let Ok(ip) = candidate.parse::<IpAddr>()
-                {
-                    return Some(ip);
-                }
-            }
+        if let Some(header) = headers.get(header_name)
+            && let Ok(raw) = header.to_str()
+            && let Some(candidate) = raw.split(',').next().map(str::trim)
+            && let Ok(ip) = candidate.parse::<IpAddr>()
+        {
+            return Some(ip);
         }
     }
 

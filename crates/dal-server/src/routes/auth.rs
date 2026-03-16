@@ -128,7 +128,7 @@ async fn register(
                 "failed to roll back Cognito user after registration DB failure"
             );
         }
-        return Err(err.into());
+        return Err(err);
     }
 
     // Generate + store email verification token
