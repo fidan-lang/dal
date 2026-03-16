@@ -2,10 +2,11 @@ use anyhow::Context;
 use aws_config::{BehaviorVersion, Region};
 use dal_common::tracing_init;
 use dotenvy::dotenv;
-use tracing::info;
+use tracing::{info, warn};
 
 mod email;
 mod jobs;
+mod maintenance;
 mod worker;
 
 #[tokio::main]
@@ -43,11 +44,27 @@ async fn main() -> anyhow::Result<()> {
 
     let mailjet = email::MailjetClient::from_env()?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let cleanup_shutdown_rx = shutdown_rx.clone();
 
     tokio::spawn(async move {
         shutdown_signal().await;
         let _ = shutdown_tx.send(true);
     });
+
+    match maintenance::StaleAccountCleaner::from_env(db.clone(), &aws_cfg)? {
+        Some(cleaner) => {
+            tokio::spawn(async move {
+                if let Err(err) = cleaner.run(cleanup_shutdown_rx).await {
+                    tracing::error!(error = %err, "stale account cleanup task crashed");
+                }
+            });
+        }
+        None => {
+            warn!(
+                "stale unverified account cleanup disabled — missing Cognito worker configuration"
+            );
+        }
+    }
 
     info!("Dal worker starting — polling {queue_url}");
     worker::run(sqs, queue_url, db, mailjet, shutdown_rx).await

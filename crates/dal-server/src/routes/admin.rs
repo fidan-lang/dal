@@ -4,6 +4,7 @@ use axum::{
     routing::delete,
 };
 use serde_json::json;
+use tracing::warn;
 
 use dal_common::error::DalError;
 use dal_db::queries;
@@ -26,13 +27,22 @@ async fn delete_package(
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
     let versions = queries::versions::list_for_package(&state.db, pkg.id).await?;
 
-    for version in &versions {
-        state.storage.delete(&version.s3_key).await?;
-    }
-
     let deleted = queries::packages::delete(&state.db, pkg.id).await?;
     if !deleted {
         return Err(DalError::PackageNotFound(name));
+    }
+
+    let mut failed_cleanup_keys = Vec::new();
+    for version in &versions {
+        if let Err(err) = state.storage.delete(&version.s3_key).await {
+            warn!(
+                package = %pkg.name,
+                s3_key = %version.s3_key,
+                error = %err,
+                "failed to delete package archive after database delete"
+            );
+            failed_cleanup_keys.push(version.s3_key.clone());
+        }
     }
 
     let _ = queries::audit::record(
@@ -45,5 +55,9 @@ async fn delete_package(
     )
     .await;
 
-    Ok(Json(json!({ "message": "package deleted" })))
+    Ok(Json(json!({
+        "message": "package deleted",
+        "storage_cleanup_failed": !failed_cleanup_keys.is_empty(),
+        "failed_cleanup_keys": failed_cleanup_keys,
+    })))
 }

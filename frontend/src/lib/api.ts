@@ -160,6 +160,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   options?: { headers?: HeadersInit },
+  allowRefresh = true,
 ): Promise<T> {
   const headers = new Headers(options?.headers);
   if (body && !headers.has("Content-Type")) {
@@ -172,6 +173,20 @@ async function request<T>(
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  if (shouldAttemptRefresh(path, res.status, allowRefresh)) {
+    const refreshHeaders = cloneHeadersForRefresh(headers);
+    const refreshResponse = await fetchFn(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: refreshHeaders,
+    });
+
+    if (refreshResponse.ok) {
+      applyRefreshCookiesToRequestHeaders(headers, refreshResponse.headers);
+      return request<T>(fetchFn, method, path, body, { headers }, false);
+    }
+  }
 
   if (!res.ok) {
     let errorMessage = `${res.status} ${res.statusText}`;
@@ -196,6 +211,79 @@ async function request<T>(
 
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+function shouldAttemptRefresh(
+  path: string,
+  status: number,
+  allowRefresh: boolean,
+): boolean {
+  if (!allowRefresh || status !== 401) return false;
+
+  return ![
+    "/auth/login",
+    "/auth/register",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+    "/auth/resend-verification",
+    "/auth/refresh",
+    "/auth/logout",
+  ].includes(path);
+}
+
+function cloneHeadersForRefresh(source: Headers): Headers {
+  const refreshHeaders = new Headers();
+  const cookie = source.get("cookie");
+  if (cookie) {
+    refreshHeaders.set("cookie", cookie);
+  }
+  return refreshHeaders;
+}
+
+function applyRefreshCookiesToRequestHeaders(
+  headers: Headers,
+  responseHeaders: Headers,
+) {
+  const existingCookieHeader = headers.get("cookie");
+  if (!existingCookieHeader) return;
+
+  const updatedCookies = new Map(
+    existingCookieHeader
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .filter(Boolean)
+      .map((cookie) => {
+        const [name, ...valueParts] = cookie.split("=");
+        return [name, valueParts.join("=")];
+      }),
+  );
+
+  for (const setCookie of getSetCookieValues(responseHeaders)) {
+    const pair = setCookie.split(";", 1)[0];
+    const [name, ...valueParts] = pair.split("=");
+    if (!name || valueParts.length === 0) continue;
+    updatedCookies.set(name, valueParts.join("="));
+  }
+
+  headers.set(
+    "cookie",
+    Array.from(updatedCookies.entries())
+      .map(([name, value]) => `${name}=${value}`)
+      .join("; "),
+  );
+}
+
+function getSetCookieValues(headers: Headers): string[] {
+  const getSetCookie = (
+    headers as Headers & { getSetCookie?: () => string[] }
+  ).getSetCookie;
+  if (typeof getSetCookie === "function") {
+    const values = getSetCookie.call(headers);
+    if (values.length > 0) return values;
+  }
+
+  const single = headers.get("set-cookie");
+  return single ? [single] : [];
 }
 
 export class DalApiError extends Error {

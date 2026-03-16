@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tracing::warn;
 use uuid::Uuid;
 
 use dal_common::error::DalError;
@@ -172,6 +173,7 @@ async fn publish(
     };
 
     let user = &actor.user;
+    let mut created_new_package = false;
     // Get or create the package record
     let pkg = match queries::packages::get_by_name(&state.db, &name).await? {
         Some(p) => {
@@ -202,6 +204,7 @@ async fn publish(
             .await?;
 
             queries::packages::add_owner(&state.db, pkg_id, user.id, "owner", None).await?;
+            created_new_package = true;
             pkg
         }
     };
@@ -220,8 +223,7 @@ async fn publish(
 
     // Persist version record
     let ver_id = Uuid::new_v4();
-
-    queries::versions::create(
+    let created_version = match queries::versions::create(
         &state.db,
         queries::versions::NewPackageVersion {
             id: ver_id,
@@ -235,10 +237,17 @@ async fn publish(
             published_by: user.id,
         },
     )
-    .await?;
+    .await
+    {
+        Ok(version) => version,
+        Err(err) => {
+            cleanup_failed_publish(&state, pkg.id, &s3_key, created_new_package, None).await;
+            return Err(err.into());
+        }
+    };
 
     // Update package metadata from latest manifest
-    queries::packages::update_metadata(
+    if let Err(err) = queries::packages::update_metadata(
         &state.db,
         queries::packages::PackageMetadataUpdate {
             id: pkg.id,
@@ -251,7 +260,18 @@ async fn publish(
             categories: &manifest.package.categories,
         },
     )
-    .await?;
+    .await
+    {
+        cleanup_failed_publish(
+            &state,
+            pkg.id,
+            &s3_key,
+            created_new_package,
+            Some(created_version.id),
+        )
+        .await;
+        return Err(err.into());
+    }
 
     // Audit log
     let _ = queries::audit::record(
@@ -272,6 +292,39 @@ async fn publish(
             "version": version_str,
         })),
     ))
+}
+
+async fn cleanup_failed_publish(
+    state: &AppState,
+    package_id: Uuid,
+    s3_key: &str,
+    created_new_package: bool,
+    created_version_id: Option<Uuid>,
+) {
+    if let Err(err) = state.storage.delete(s3_key).await {
+        warn!(s3_key, error = %err, "failed to roll back uploaded archive after publish failure");
+    }
+
+    if created_new_package {
+        if let Err(err) = queries::packages::delete(&state.db, package_id).await {
+            warn!(
+                package_id = %package_id,
+                error = %err,
+                "failed to roll back newly created package after publish failure"
+            );
+        }
+        return;
+    }
+
+    if let Some(version_id) = created_version_id
+        && let Err(err) = queries::versions::delete(&state.db, version_id).await
+    {
+        warn!(
+            version_id = %version_id,
+            error = %err,
+            "failed to roll back created package version after publish failure"
+        );
+    }
 }
 
 // ── Yank / Unyank ─────────────────────────────────────────────────────────────

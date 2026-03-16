@@ -88,6 +88,14 @@ pub async fn exists(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult
     Ok(row.0)
 }
 
+pub async fn delete(pool: &PgPool, id: Uuid) -> DalResult<bool> {
+    let res = sqlx::query("DELETE FROM package_versions WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
 pub async fn yank(
     pool: &PgPool,
     package_id: Uuid,

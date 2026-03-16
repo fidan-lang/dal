@@ -3,6 +3,7 @@ use crate::state::AppState;
 use axum::{
     Router,
     http::{HeaderValue, Method, header},
+    middleware,
 };
 use tower_http::{
     cors::{AllowHeaders, AllowOrigin, CorsLayer},
@@ -42,6 +43,11 @@ fn allowed_origins() -> Vec<HeaderValue> {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let auth_router = routes::auth::router().route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        crate::middleware::rate_limit::enforce_auth_rate_limit,
+    ));
+
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins()))
         .allow_methods([
@@ -62,7 +68,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .merge(routes::admin::router())
-        .merge(routes::auth::router())
+        .merge(auth_router)
         .merge(routes::users::router())
         .merge(routes::packages::router())
         .merge(routes::versions::router())

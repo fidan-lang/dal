@@ -1,5 +1,6 @@
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode, header},
     routing::{get, post},
@@ -28,6 +29,9 @@ pub fn router() -> Router<AppState> {
         .route("/auth/reset-password", post(reset_password))
         .route("/auth/me", get(me))
 }
+
+const ACCESS_COOKIE_NAME: &str = "dal_access_token";
+const REFRESH_COOKIE_NAME: &str = "dal_refresh_token";
 
 fn cookie_attrs(path: &str, max_age: i64, base_url: &str) -> String {
     let secure = if base_url.trim().starts_with("https://") {
@@ -107,7 +111,7 @@ async fn register(
 
     // Create DB user
     let user_id = Uuid::new_v4();
-    queries::users::create(
+    if let Err(err) = queries::users::create(
         &state.db,
         user_id,
         &username,
@@ -115,7 +119,17 @@ async fn register(
         &cognito_sub,
         body.display_name.as_deref(),
     )
-    .await?;
+    .await
+    {
+        if let Err(cleanup_err) = state.cognito.admin_delete_user_if_exists(&username).await {
+            tracing::error!(
+                username,
+                error = %cleanup_err,
+                "failed to roll back Cognito user after registration DB failure"
+            );
+        }
+        return Err(err.into());
+    }
 
     // Generate + store email verification token
     let raw_token = format!("ev_{}", hex::encode(Uuid::new_v4().as_bytes()));
@@ -238,11 +252,20 @@ async fn login(
     let (_access, id_token, refresh) = state.cognito.sign_in(&username, &body.password).await?;
 
     let mut headers = HeaderMap::new();
-    // httpOnly SameSite=Strict cookies — tokens never exposed to JS
     headers.insert(
         header::SET_COOKIE,
         format!(
-            "dal_access_token={id_token}{}",
+            "{REFRESH_COOKIE_NAME}={}",
+            cookie_attrs("/auth/refresh", 0, &state.cfg.base_url)
+        )
+        .parse()
+        .unwrap(),
+    );
+    // httpOnly SameSite=Strict cookies — tokens never exposed to JS
+    headers.append(
+        header::SET_COOKIE,
+        format!(
+            "{ACCESS_COOKIE_NAME}={id_token}{}",
             cookie_attrs("/", 3600, &state.cfg.base_url)
         )
         .parse()
@@ -251,8 +274,8 @@ async fn login(
     headers.append(
         header::SET_COOKIE,
         format!(
-            "dal_refresh_token={refresh}{}",
-            cookie_attrs("/auth/refresh", 2_592_000, &state.cfg.base_url)
+            "{REFRESH_COOKIE_NAME}={refresh}{}",
+            cookie_attrs("/", 2_592_000, &state.cfg.base_url)
         )
         .parse()
         .unwrap(),
@@ -276,7 +299,7 @@ async fn logout(
     headers.insert(
         header::SET_COOKIE,
         format!(
-            "dal_access_token={}",
+            "{ACCESS_COOKIE_NAME}={}",
             cookie_attrs("/", 0, &state.cfg.base_url)
         )
         .parse()
@@ -285,8 +308,17 @@ async fn logout(
     headers.append(
         header::SET_COOKIE,
         format!(
-            "dal_refresh_token={}",
+            "{REFRESH_COOKIE_NAME}={}",
             cookie_attrs("/auth/refresh", 0, &state.cfg.base_url)
+        )
+        .parse()
+        .unwrap(),
+    );
+    headers.append(
+        header::SET_COOKIE,
+        format!(
+            "{REFRESH_COOKIE_NAME}={}",
+            cookie_attrs("/", 0, &state.cfg.base_url)
         )
         .parse()
         .unwrap(),
@@ -304,15 +336,17 @@ struct RefreshBody {
 
 async fn refresh(
     State(state): State<AppState>,
-    Json(body): Json<RefreshBody>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
-    let (_access, id) = state.cognito.refresh(&body.refresh_token).await?;
+    let refresh_token = resolve_refresh_token(&headers, &body)?;
+    let (_access, id) = state.cognito.refresh(&refresh_token).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
         format!(
-            "dal_access_token={id}{}",
+            "{ACCESS_COOKIE_NAME}={id}{}",
             cookie_attrs("/", 3600, &state.cfg.base_url)
         )
         .parse()
@@ -440,6 +474,33 @@ async fn reset_password(
 
 async fn me(AuthUser(user): AuthUser) -> Json<Value> {
     Json(serde_json::to_value(&user).unwrap_or_default())
+}
+
+fn resolve_refresh_token(headers: &HeaderMap, body: &[u8]) -> Result<String, DalError> {
+    if !body.is_empty() {
+        let parsed: RefreshBody = serde_json::from_slice(body)
+            .map_err(|e| DalError::Validation(format!("invalid refresh request body: {e}")))?;
+        let refresh_token = parsed.refresh_token.trim();
+        if refresh_token.is_empty() {
+            return Err(DalError::Unauthorized);
+        }
+        return Ok(refresh_token.to_string());
+    }
+
+    extract_cookie(headers, REFRESH_COOKIE_NAME).ok_or(DalError::Unauthorized)
+}
+
+fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
+
+    cookies.split(';').find_map(|cookie| {
+        let (key, value) = cookie.trim().split_once('=')?;
+        if key == name {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────

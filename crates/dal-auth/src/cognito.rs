@@ -237,6 +237,36 @@ impl CognitoClient {
         Ok(())
     }
 
+    /// Delete a user from Cognito, treating "already gone" as a successful no-op.
+    /// Returns `true` if Cognito deleted a user, `false` if the user was already absent.
+    pub async fn admin_delete_user_if_exists(&self, username: &str) -> Result<bool, DalError> {
+        match self
+            .inner
+            .admin_delete_user()
+            .user_pool_id(&self.pool_id)
+            .username(username)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                let debug = format!("{err:?}");
+                if debug.contains("UserNotFoundException") {
+                    warn!(
+                        operation = "admin_delete_user",
+                        username,
+                        pool_id = %self.pool_id,
+                        client_id = %self.client_id,
+                        "cognito user already absent during cleanup"
+                    );
+                    Ok(false)
+                } else {
+                    Err(self.cognito_request_error("admin_delete_user", Some(username), err))
+                }
+            }
+        }
+    }
+
     /// Sign out (globally invalidate all tokens) for a user.
     pub async fn admin_sign_out(&self, username: &str) -> Result<(), DalError> {
         self.inner

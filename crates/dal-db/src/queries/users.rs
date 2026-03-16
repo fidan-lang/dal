@@ -50,6 +50,26 @@ pub async fn get_by_email(pool: &PgPool, email: &str) -> DalResult<Option<User>>
     Ok(user)
 }
 
+pub async fn list_stale_unverified(
+    pool: &PgPool,
+    older_than: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> DalResult<Vec<User>> {
+    let users = sqlx::query_as::<_, User>(
+        "SELECT *
+         FROM users
+         WHERE email_verified = false
+           AND created_at < $1
+         ORDER BY created_at ASC
+         LIMIT $2",
+    )
+    .bind(older_than)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(users)
+}
+
 pub async fn get_by_cognito_sub(pool: &PgPool, sub: &str) -> DalResult<Option<User>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE cognito_sub = $1")
         .bind(sub)
@@ -78,6 +98,14 @@ pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> DalResult<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn delete_unverified(pool: &PgPool, user_id: Uuid) -> DalResult<bool> {
+    let result = sqlx::query("DELETE FROM users WHERE id = $1 AND email_verified = false")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn update_profile(
