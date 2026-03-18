@@ -4,5 +4,6 @@ pub mod app;
 pub mod config;
 pub mod extractors;
 pub mod middleware;
+pub mod responses;
 pub mod routes;
 pub mod state;

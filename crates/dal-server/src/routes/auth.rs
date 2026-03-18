@@ -15,7 +15,7 @@ use dal_auth::api_token::hash_token as sha256_hex;
 use dal_common::error::DalError;
 use dal_db::queries;
 
-use crate::{extractors::AuthUser, state::AppState};
+use crate::{extractors::AuthUser, responses::CurrentUserResponse, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -283,7 +283,7 @@ async fn login(
 
     Ok((
         headers,
-        Json(serde_json::to_value(&db_user).unwrap_or_default()),
+        Json(serde_json::to_value(CurrentUserResponse::from(db_user)).unwrap_or_default()),
     ))
 }
 
@@ -473,7 +473,7 @@ async fn reset_password(
 // ── Me ────────────────────────────────────────────────────────────────────────
 
 async fn me(AuthUser(user): AuthUser) -> Json<Value> {
-    Json(serde_json::to_value(&user).unwrap_or_default())
+    Json(serde_json::to_value(CurrentUserResponse::from(user)).unwrap_or_default())
 }
 
 fn resolve_refresh_token(headers: &HeaderMap, body: &[u8]) -> Result<String, DalError> {

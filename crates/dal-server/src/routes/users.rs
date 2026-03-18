@@ -9,7 +9,7 @@ use serde_json::Value;
 use dal_common::{error::DalError, pagination::Page, pagination::PageParams};
 use dal_db::queries;
 
-use crate::{extractors::AuthActor, state::AppState};
+use crate::{extractors::AuthActor, responses::CurrentUserResponse, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -69,5 +69,7 @@ async fn update_profile(
         body.avatar_url.as_deref(),
     )
     .await?;
-    Ok(Json(serde_json::to_value(&updated).unwrap_or_default()))
+    Ok(Json(
+        serde_json::to_value(CurrentUserResponse::from(updated)).unwrap_or_default(),
+    ))
 }
