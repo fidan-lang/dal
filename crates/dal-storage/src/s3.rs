@@ -2,7 +2,7 @@ use aws_sdk_s3::{Client, presigning::PresigningConfig, primitives::ByteStream};
 use dal_common::error::DalError;
 use std::time::Duration;
 
-/// Thin wrapper around the S3 SDK client.
+/// Thin wrapper around an S3-compatible object storage SDK client.
 pub struct StorageClient {
     inner: Client,
     bucket: String,
@@ -13,25 +13,39 @@ impl StorageClient {
         aws_cfg: &aws_config::SdkConfig,
         bucket: String,
         endpoint_url: Option<String>,
+        access_key_id: Option<String>,
+        secret_access_key: Option<String>,
+        region: String,
     ) -> anyhow::Result<Self> {
         let mut builder = aws_sdk_s3::config::Builder::from(aws_cfg);
-        if let Some(url) = endpoint_url {
-            // LocalStack / MinIO override
+        let mut force_path_style = false;
+        builder = builder.region(aws_sdk_s3::config::Region::new(region));
+        if let Some(ref url) = endpoint_url {
+            // LocalStack / MinIO / R2 override
             builder = builder.endpoint_url(url);
+            force_path_style = is_path_style_endpoint(url);
         }
-        let s3_config = builder
-            .force_path_style(true) // required for LocalStack
-            .build();
+        if let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) {
+            let credentials = aws_sdk_s3::config::Credentials::new(
+                access_key_id,
+                secret_access_key,
+                None,
+                None,
+                "dal-storage-config",
+            );
+            builder = builder.credentials_provider(credentials);
+        }
+        let s3_config = builder.force_path_style(force_path_style).build();
         let inner = Client::from_conf(s3_config);
         Ok(Self { inner, bucket })
     }
 
-    /// S3 key for a package archive:  `packages/{name}/{name}-{version}.tar.gz`
+    /// Object key for a package archive: `packages/{name}/{name}-{version}.tar.gz`
     pub fn object_key(pkg_name: &str, version: &str) -> String {
         format!("packages/{pkg_name}/{pkg_name}-{version}.tar.gz")
     }
 
-    /// Upload a package archive to S3.
+    /// Upload a package archive to object storage.
     pub async fn upload(
         &self,
         key: &str,
@@ -80,7 +94,7 @@ impl StorageClient {
         Ok(())
     }
 
-    /// Check whether an object exists in S3.
+    /// Check whether an object exists in storage.
     pub async fn exists(&self, key: &str) -> Result<bool, DalError> {
         match self
             .inner
@@ -101,4 +115,9 @@ impl StorageClient {
             }
         }
     }
+}
+
+fn is_path_style_endpoint(url: &str) -> bool {
+    let lowered = url.to_ascii_lowercase();
+    lowered.contains("localhost") || lowered.contains("127.0.0.1") || lowered.contains("localstack")
 }

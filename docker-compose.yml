@@ -3,7 +3,7 @@
 #
 # Services:
 #   postgres   – PostgreSQL 16 (mimics RDS)
-#   localstack – AWS S3 + SQS emulation (no Cognito – use real AWS free-tier)
+#   localstack – object storage + SQS emulation (no Cognito – use real AWS free-tier)
 #   dal-server – Axum HTTP server
 #   dal-worker – SQS consumer + email jobs
 #
@@ -34,7 +34,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── LocalStack (S3 + SQS) ──────────────────────────────────────────────────
+  # ── LocalStack (S3-compatible storage + SQS) ───────────────────────────────
   localstack:
     image: localstack/localstack:3
     restart: unless-stopped
@@ -74,7 +74,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://dal:password@postgres:5432/dal
-      DAL_S3_ENDPOINT_URL: http://localstack:4566
+      DAL_STORAGE_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo
       DAL_LISTEN_ADDR: "0.0.0.0:8080"
@@ -98,7 +98,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://dal:password@postgres:5432/dal
-      DAL_S3_ENDPOINT_URL: http://localstack:4566
+      DAL_STORAGE_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo
       AWS_ACCESS_KEY_ID: test

@@ -18,7 +18,7 @@
 
 ## Overview
 
-Dal is the package registry for the Fidan language — it lets developers publish, discover, and install Fidan packages. It follows a sparse-index protocol similar to crates.io and is built with a Rust backend, PostgreSQL, AWS S3 (package storage), AWS Cognito (auth), AWS SQS (background jobs), and a SvelteKit frontend.
+Dal is the package registry for the Fidan language — it lets developers publish, discover, and install Fidan packages. It follows a sparse-index protocol similar to crates.io and is built with a Rust backend, PostgreSQL, S3-compatible object storage such as Cloudflare R2 (package storage), AWS Cognito (auth), AWS SQS (background jobs), and a SvelteKit frontend.
 
 ---
 
@@ -34,10 +34,10 @@ Dal is the package registry for the Fidan language — it lets developers publis
 │  Routes: /auth  /packages  /users  /tokens        │
 │          /search  /index/{name}  /health          │
 └──┬──────────────────┬──────────────┬─────────────┘
-   │ sqlx             │ S3           │ SQS
+   │ sqlx             │ Storage      │ SQS
    ▼                  ▼              ▼
 PostgreSQL        dal-packages-  dal-jobs.fifo
-                  prod (S3)      ──────────────
+                  prod (R2)      ──────────────
                                  dal-worker
                                  (email, etc.)
 ````
@@ -50,7 +50,7 @@ PostgreSQL        dal-packages-  dal-jobs.fifo
 | ``dal-auth`` | Cognito client, JWT validation, API token hashing |
 | ``dal-db`` | PostgreSQL queries, migrations, models |
 | ``dal-manifest`` | ``dal.toml`` parsing and validation |
-| ``dal-storage`` | S3 package archive upload/download |
+| ``dal-storage`` | S3-compatible package archive upload/download |
 | ``dal-index`` | Sparse NDJSON index served at ``/index/{name}`` |
 | ``dal-server`` | Axum HTTP API server (binary) |
 | ``dal-worker`` | SQS background job worker — sends emails (binary) |
@@ -64,7 +64,7 @@ PostgreSQL        dal-packages-  dal-jobs.fifo
 - Rust (stable, edition 2024)
 - Docker (for local Postgres)
 - Node.js 20+ (for frontend)
-- AWS account with Cognito, S3, SQS configured (or LocalStack for local dev)
+- AWS account with Cognito and SQS configured, plus an S3-compatible object store such as Cloudflare R2 (or LocalStack for local dev)
 
 ### 1. Clone
 
@@ -77,7 +77,9 @@ cd dal
 
 ```bash
 cp .env.example .env
-# Fill in AWS credentials, Cognito pool/client IDs, S3 bucket, SQS URL
+# Fill in AWS credentials, Cognito pool/client IDs, storage bucket, SQS URL
+# For Cloudflare R2, use DAL_STORAGE_ACCESS_KEY_ID / DAL_STORAGE_SECRET_ACCESS_KEY
+# instead of overriding the global AWS_* credentials used by task-role-backed AWS services.
 ```
 
 ### 3. Start Postgres

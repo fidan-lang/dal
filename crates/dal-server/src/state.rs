@@ -38,9 +38,15 @@ impl AppState {
             .await;
 
         // Storage
-        let storage =
-            StorageClient::new(&aws_cfg, cfg.s3_bucket.clone(), cfg.s3_endpoint_url.clone())
-                .await?;
+        let storage = StorageClient::new(
+            &aws_cfg,
+            cfg.storage_bucket.clone(),
+            cfg.storage_endpoint_url.clone(),
+            cfg.storage_access_key_id.clone(),
+            cfg.storage_secret_access_key.clone(),
+            cfg.storage_region.clone(),
+        )
+        .await?;
 
         // Cognito
         let cognito = CognitoClient::from_sdk_config(

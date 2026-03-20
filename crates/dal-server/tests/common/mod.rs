@@ -19,11 +19,19 @@ fn test_config() -> Config {
             .unwrap_or_else(|_| "postgres://dal_test:test@localhost:5433/dal_test".to_string()),
         listen_addr: "127.0.0.1:0".to_string(),
         base_url: "http://localhost".to_string(),
-        s3_bucket: "dal-test".to_string(),
-        s3_endpoint_url: Some(
-            std::env::var("TEST_S3_ENDPOINT_URL")
+        storage_bucket: "dal-test".to_string(),
+        storage_endpoint_url: Some(
+            std::env::var("TEST_STORAGE_ENDPOINT_URL")
                 .unwrap_or_else(|_| "http://localhost:4567".to_string()),
         ),
+        storage_access_key_id: std::env::var("TEST_STORAGE_ACCESS_KEY_ID")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        storage_secret_access_key: std::env::var("TEST_STORAGE_SECRET_ACCESS_KEY")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        storage_region: std::env::var("TEST_STORAGE_REGION")
+            .unwrap_or_else(|_| "eu-central-1".to_string()),
         sqs_queue_url: std::env::var("TEST_SQS_QUEUE_URL").unwrap_or_else(|_| {
             "http://sqs.eu-central-1.localhost.localstack.cloud:4567/000000000000/dal-jobs-test.fifo"
                 .to_string()

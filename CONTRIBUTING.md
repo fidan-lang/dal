@@ -55,7 +55,7 @@ crates/
     dal-auth/       # Cognito JWT validation, API token hashing
     dal-db/         # PostgreSQL queries and migrations
     dal-manifest/   # dal.toml parsing and validation
-    dal-storage/    # S3 package archive storage
+    dal-storage/    # S3-compatible package archive storage
     dal-index/      # sparse package index (NDJSON)
     dal-server/     # Axum HTTP API server
     dal-worker/     # SQS background job worker

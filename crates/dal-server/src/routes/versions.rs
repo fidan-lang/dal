@@ -214,7 +214,7 @@ async fn publish(
         return Err(DalError::VersionAlreadyExists(version_str, name));
     }
 
-    // Upload archive to S3
+    // Upload archive to object storage
     let s3_key = StorageClient::object_key(&pkg.name, &version_str);
     state
         .storage
