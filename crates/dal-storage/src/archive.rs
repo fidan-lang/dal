@@ -283,6 +283,7 @@ fn is_allowed_top_level_dir(name: &str) -> bool {
 fn is_allowed_top_level_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower == "dal.toml"
+        || lower == "dal.lock"
         || lower == "readme"
         || lower == "readme.md"
         || lower == "readme.txt"
@@ -343,6 +344,30 @@ mod tests {
         assert!(info.files.contains("src/init.fdn"));
         assert!(info.files.contains("assets/logo.png"));
         assert_eq!(info.readme_path.as_deref(), Some("README.md"));
+    }
+
+    #[test]
+    fn accepts_dal_lock_as_top_level_file() {
+        let bytes = archive_bytes(vec![
+            (
+                "demo-0.1.0/dal.toml",
+                EntryType::Regular,
+                b"[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "demo-0.1.0/dal.lock",
+                EntryType::Regular,
+                b"schema_version = 1\n",
+            ),
+            (
+                "demo-0.1.0/src/init.fdn",
+                EntryType::Regular,
+                b"action main {}",
+            ),
+        ]);
+
+        let info = validate_archive(&bytes, 1024 * 1024).expect("valid archive");
+        assert!(info.files.contains("dal.lock"));
     }
 
     #[test]

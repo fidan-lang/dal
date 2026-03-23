@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use dal_common::error::DalError;
 use dal_db::queries;
-use dal_manifest::Manifest;
-use dal_storage::StorageClient;
+use dal_manifest::{Lockfile, Manifest};
+use dal_storage::{ArchiveInfo, StorageClient};
 
 use crate::{extractors::AuthActor, state::AppState};
 
@@ -137,9 +137,20 @@ async fn publish(
     // Parse manifest
     let manifest_bytes = info
         .manifest_bytes
+        .as_ref()
         .ok_or_else(|| DalError::ManifestInvalid("dal.toml not found in archive".into()))?;
-    let manifest = Manifest::from_toml(&manifest_bytes)
+    let manifest = Manifest::from_toml(manifest_bytes)
         .map_err(|e| DalError::ManifestInvalid(e.to_string()))?;
+    validate_publish_contract(&manifest, &info)?;
+    if !manifest.dependencies.is_empty() {
+        let lock_bytes = dal_storage::extract_file(&bytes, &info.root_dir, "dal.lock")?
+            .ok_or_else(|| {
+                DalError::ManifestInvalid(
+                    "packages with `[dependencies]` must include a dal.lock file".into(),
+                )
+            })?;
+        validate_lockfile_bytes(&manifest, &lock_bytes)?;
+    }
 
     // Ensure package name in manifest matches URL
     if !manifest.package.name.eq_ignore_ascii_case(&name) {
@@ -294,6 +305,31 @@ async fn publish(
     ))
 }
 
+fn validate_publish_contract(manifest: &Manifest, info: &ArchiveInfo) -> Result<(), DalError> {
+    if !manifest.dependencies.is_empty() && !info.files.contains("dal.lock") {
+        return Err(DalError::ManifestInvalid(
+            "packages with `[dependencies]` must include a dal.lock file".into(),
+        ));
+    }
+
+    if let Some(cli) = &manifest.cli
+        && !info.files.contains(&cli.entry)
+    {
+        return Err(DalError::ManifestInvalid(format!(
+            "declared CLI entry `{}` not found in archive",
+            cli.entry
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_lockfile_bytes(manifest: &Manifest, bytes: &[u8]) -> Result<(), DalError> {
+    let lock = Lockfile::from_toml(bytes).map_err(|e| DalError::ManifestInvalid(e.to_string()))?;
+    lock.validate_against_manifest(manifest)
+        .map_err(|e| DalError::ManifestInvalid(e.to_string()))
+}
+
 async fn cleanup_failed_publish(
     state: &AppState,
     package_id: Uuid,
@@ -323,6 +359,137 @@ async fn cleanup_failed_publish(
             version_id = %version_id,
             error = %err,
             "failed to roll back created package version after publish failure"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{BTreeSet, HashMap};
+
+    fn archive_info(files: &[&str]) -> ArchiveInfo {
+        ArchiveInfo {
+            checksum: "deadbeef".into(),
+            size_bytes: 42,
+            root_dir: "demo-1.0.0".into(),
+            manifest_bytes: None,
+            files: files
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect::<BTreeSet<_>>(),
+            readme_bytes: None,
+            readme_path: None,
+        }
+    }
+
+    #[test]
+    fn publish_contract_requires_lock_for_dependencies() {
+        let manifest = Manifest {
+            package: dal_manifest::PackageMeta {
+                name: "demo".into(),
+                version: "1.0.0".into(),
+                description: None,
+                license: None,
+                repository: None,
+                homepage: None,
+                docs: None,
+                keywords: vec![],
+                categories: vec![],
+                readme: None,
+                include: vec![],
+                exclude: vec![],
+            },
+            dependencies: HashMap::from([(
+                "other-package".into(),
+                dal_manifest::DependencySpec::Simple("^1.2".into()),
+            )]),
+            dev_dependencies: HashMap::new(),
+            cli: None,
+        };
+
+        let error =
+            validate_publish_contract(&manifest, &archive_info(&["dal.toml", "src/init.fdn"]))
+                .expect_err("missing dal.lock should fail");
+        assert!(error.to_string().contains("must include a dal.lock file"));
+    }
+
+    #[test]
+    fn publish_contract_requires_cli_entry_file() {
+        let manifest = Manifest {
+            package: dal_manifest::PackageMeta {
+                name: "demo".into(),
+                version: "1.0.0".into(),
+                description: None,
+                license: None,
+                repository: None,
+                homepage: None,
+                docs: None,
+                keywords: vec![],
+                categories: vec![],
+                readme: None,
+                include: vec![],
+                exclude: vec![],
+            },
+            dependencies: HashMap::new(),
+            dev_dependencies: HashMap::new(),
+            cli: Some(dal_manifest::CliMeta {
+                entry: "src/main.fdn".into(),
+                name: None,
+            }),
+        };
+
+        let error =
+            validate_publish_contract(&manifest, &archive_info(&["dal.toml", "src/init.fdn"]))
+                .expect_err("missing cli entry should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("declared CLI entry `src/main.fdn` not found")
+        );
+    }
+
+    #[test]
+    fn lockfile_validation_rejects_mismatched_direct_dependency_version() {
+        let manifest = Manifest {
+            package: dal_manifest::PackageMeta {
+                name: "demo".into(),
+                version: "1.0.0".into(),
+                description: None,
+                license: None,
+                repository: None,
+                homepage: None,
+                docs: None,
+                keywords: vec![],
+                categories: vec![],
+                readme: None,
+                include: vec![],
+                exclude: vec![],
+            },
+            dependencies: HashMap::from([(
+                "other-package".into(),
+                dal_manifest::DependencySpec::Simple("^2.0".into()),
+            )]),
+            dev_dependencies: HashMap::new(),
+            cli: None,
+        };
+
+        let error = validate_lockfile_bytes(
+            &manifest,
+            br#"
+schema_version = 1
+
+[[packages]]
+name = "other-package"
+module = "other_package"
+version = "1.2.3"
+"#,
+        )
+        .expect_err("mismatched direct dependency should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("requires `^2.0` but lock pins `1.2.3`")
         );
     }
 }
