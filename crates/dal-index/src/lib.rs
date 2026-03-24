@@ -67,10 +67,16 @@ pub fn entry_from_version(
         deps.push(IndexDep {
             name: dep_name.clone(),
             req: spec.version_req().to_string(),
-            optional: matches!(
-                spec,
-                dal_manifest::DependencySpec::Detailed { optional: true, .. }
-            ),
+            optional: spec.is_optional(),
+            kind: DepKind::Normal,
+        });
+    }
+
+    for (dep_name, spec) in &manifest.optional_dependencies {
+        deps.push(IndexDep {
+            name: dep_name.clone(),
+            req: spec.version_req().to_string(),
+            optional: true,
             kind: DepKind::Normal,
         });
     }
@@ -91,5 +97,43 @@ pub fn entry_from_version(
         cksum: checksum.to_string(),
         yanked,
         license: license.map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dal_manifest::Manifest;
+
+    #[test]
+    fn index_entry_includes_optional_dependencies() {
+        let manifest: Manifest = r#"
+[package]
+name = "torch"
+version = "1.0.0"
+
+[dependencies]
+core = "^1"
+
+[optional-dependencies]
+python-runtime = "^3"
+"#
+        .parse()
+        .expect("valid manifest");
+
+        let entry = entry_from_version("torch", "1.0.0", "abc", false, None, &manifest);
+        assert_eq!(entry.deps.len(), 2);
+        assert!(
+            entry
+                .deps
+                .iter()
+                .any(|dep| dep.name == "python-runtime" && dep.optional)
+        );
+        assert!(
+            entry
+                .deps
+                .iter()
+                .any(|dep| dep.name == "core" && !dep.optional)
+        );
     }
 }

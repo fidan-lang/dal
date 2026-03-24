@@ -142,11 +142,11 @@ async fn publish(
     let manifest = Manifest::from_toml(manifest_bytes)
         .map_err(|e| DalError::ManifestInvalid(e.to_string()))?;
     validate_publish_contract(&manifest, &info)?;
-    if !manifest.dependencies.is_empty() {
+    if manifest.has_runtime_dependencies() {
         let lock_bytes = dal_storage::extract_file(&bytes, &info.root_dir, "dal.lock")?
             .ok_or_else(|| {
                 DalError::ManifestInvalid(
-                    "packages with `[dependencies]` must include a dal.lock file".into(),
+                    "packages with dependencies must include a `dal.lock` file".into(),
                 )
             })?;
         validate_lockfile_bytes(&manifest, &lock_bytes)?;
@@ -306,9 +306,9 @@ async fn publish(
 }
 
 fn validate_publish_contract(manifest: &Manifest, info: &ArchiveInfo) -> Result<(), DalError> {
-    if !manifest.dependencies.is_empty() && !info.files.contains("dal.lock") {
+    if manifest.has_runtime_dependencies() && !info.files.contains("dal.lock") {
         return Err(DalError::ManifestInvalid(
-            "packages with `[dependencies]` must include a dal.lock file".into(),
+            "packages with dependencies must include a `dal.lock` file".into(),
         ));
     }
 
@@ -404,7 +404,9 @@ mod tests {
                 "other-package".into(),
                 dal_manifest::DependencySpec::Simple("^1.2".into()),
             )]),
+            optional_dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
+            features: HashMap::new(),
             cli: None,
         };
 
@@ -414,6 +416,38 @@ mod tests {
         assert!(error.to_string().contains("must include a dal.lock file"));
     }
 
+    #[test]
+    fn publish_contract_requires_lock_for_optional_dependencies() {
+        let manifest = Manifest {
+            package: dal_manifest::PackageMeta {
+                name: "demo".into(),
+                version: "1.0.0".into(),
+                description: None,
+                license: None,
+                repository: None,
+                homepage: None,
+                docs: None,
+                keywords: vec![],
+                categories: vec![],
+                readme: None,
+                include: vec![],
+                exclude: vec![],
+            },
+            dependencies: HashMap::new(),
+            optional_dependencies: HashMap::from([(
+                "python-runtime".into(),
+                dal_manifest::DependencySpec::Simple("^3".into()),
+            )]),
+            dev_dependencies: HashMap::new(),
+            features: HashMap::from([("pybindings".into(), vec!["dep:python-runtime".into()])]),
+            cli: None,
+        };
+
+        let error =
+            validate_publish_contract(&manifest, &archive_info(&["dal.toml", "src/init.fdn"]))
+                .expect_err("missing dal.lock should fail");
+        assert!(error.to_string().contains("must include a dal.lock file"));
+    }
     #[test]
     fn publish_contract_requires_cli_entry_file() {
         let manifest = Manifest {
@@ -432,7 +466,9 @@ mod tests {
                 exclude: vec![],
             },
             dependencies: HashMap::new(),
+            optional_dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
+            features: HashMap::new(),
             cli: Some(dal_manifest::CliMeta {
                 entry: "src/main.fdn".into(),
                 name: None,
@@ -470,7 +506,9 @@ mod tests {
                 "other-package".into(),
                 dal_manifest::DependencySpec::Simple("^2.0".into()),
             )]),
+            optional_dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
+            features: HashMap::new(),
             cli: None,
         };
 

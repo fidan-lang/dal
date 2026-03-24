@@ -10,14 +10,22 @@ pub use validate::validate_package_name;
 
 const LOCK_SCHEMA_VERSION: u32 = 1;
 
+fn default_dependency_version() -> String {
+    "*".to_string()
+}
+
 /// Parsed and validated `dal.toml` manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub package: PackageMeta,
     #[serde(default)]
     pub dependencies: HashMap<String, DependencySpec>,
-    #[serde(default)]
+    #[serde(rename = "optional-dependencies", default)]
+    pub optional_dependencies: HashMap<String, DependencySpec>,
+    #[serde(rename = "dev-dependencies", default)]
     pub dev_dependencies: HashMap<String, DependencySpec>,
+    #[serde(default)]
+    pub features: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub cli: Option<CliMeta>,
 }
@@ -73,27 +81,35 @@ pub struct LockedPackage {
     pub version: String,
     #[serde(default)]
     pub dependencies: HashMap<String, String>,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// A dependency specification.
 ///
 /// In `dal.toml` this can be written in two ways:
 ///     my-pkg = "^1.0"
-///     my-pkg = { version = "^1.0", optional = true }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///     my-pkg = { version = "^1.0", features = ["gpu"] }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DependencySpec {
     /// Short form: just a version requirement string.
     Simple(String),
     /// Detailed form with optional fields.
-    Detailed {
-        version: String,
-        #[serde(default)]
-        optional: bool,
-        /// Pin to an exact git repository instead of the registry.
-        git: Option<String>,
-        rev: Option<String>,
-    },
+    Detailed(DependencyDetail),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DependencyDetail {
+    #[serde(default = "default_dependency_version")]
+    pub version: String,
+    #[serde(default)]
+    pub optional: bool,
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// Pin to an exact git repository instead of the registry.
+    pub git: Option<String>,
+    pub rev: Option<String>,
 }
 
 impl DependencySpec {
@@ -101,7 +117,21 @@ impl DependencySpec {
     pub fn version_req(&self) -> &str {
         match self {
             Self::Simple(v) => v,
-            Self::Detailed { version, .. } => version,
+            Self::Detailed(detail) => detail.version.as_str(),
+        }
+    }
+
+    pub fn features(&self) -> &[String] {
+        match self {
+            Self::Simple(_) => &[],
+            Self::Detailed(detail) => &detail.features,
+        }
+    }
+
+    pub fn is_optional(&self) -> bool {
+        match self {
+            Self::Simple(_) => false,
+            Self::Detailed(detail) => detail.optional,
         }
     }
 }
@@ -117,6 +147,10 @@ impl Manifest {
     pub fn version(&self) -> Result<Version, ManifestError> {
         Version::parse(&self.package.version)
             .map_err(|_| ManifestError::InvalidVersion(self.package.version.clone()))
+    }
+
+    pub fn has_runtime_dependencies(&self) -> bool {
+        !self.dependencies.is_empty() || !self.optional_dependencies.is_empty()
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
@@ -154,14 +188,27 @@ impl Manifest {
             }
         }
 
-        // Validate dependency version requirements
-        for (name, dep) in self.dependencies.iter().chain(self.dev_dependencies.iter()) {
-            semver::VersionReq::parse(dep.version_req()).map_err(|_| {
-                ManifestError::InvalidVersionReq {
-                    dep: name.clone(),
-                    req: dep.version_req().into(),
-                }
-            })?;
+        for (name, dep) in self
+            .dependencies
+            .iter()
+            .chain(self.optional_dependencies.iter())
+            .chain(self.dev_dependencies.iter())
+        {
+            validate_package_name(name)?;
+            validate_dependency_spec(name, dep)?;
+        }
+
+        for (feature, members) in &self.features {
+            validate_feature_name(feature)?;
+            for member in members {
+                validate_feature_member(self, feature, member)?;
+            }
+        }
+
+        let mut validated = HashSet::new();
+        let mut visiting = Vec::new();
+        for feature in self.features.keys() {
+            validate_feature_graph(self, feature, &mut validated, &mut visiting)?;
         }
 
         if let Some(cli) = &self.cli {
@@ -234,6 +281,12 @@ impl Lockfile {
                 package: pkg.name.clone(),
                 version: pkg.version.clone(),
             })?;
+            let normalized = normalize_feature_list(&pkg.features);
+            for feature in &normalized {
+                validate_feature_name(feature).map_err(|_| {
+                    LockError::Validation(format!("invalid locked feature `{feature}`"))
+                })?;
+            }
             by_name.insert(pkg.name.clone(), pkg);
         }
 
@@ -258,6 +311,14 @@ impl Lockfile {
                     requirement: dep_spec.version_req().to_string(),
                     locked_version: locked.version.clone(),
                 });
+            }
+            let expected_features = normalize_feature_list(dep_spec.features());
+            let locked_features = normalize_feature_list(&locked.features);
+            if expected_features != locked_features {
+                return Err(LockError::Validation(format!(
+                    "direct dependency `{dep_name}` enables features {:?} but lock records {:?}",
+                    expected_features, locked_features
+                )));
             }
         }
 
@@ -352,6 +413,8 @@ pub enum ManifestError {
     InvalidCliEntry(String),
     #[error("invalid CLI binary name `{0}`")]
     InvalidCliName(String),
+    #[error("{0}")]
+    Validation(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -406,6 +469,106 @@ pub enum LockError {
     DependencyCycle(String),
     #[error("unreachable locked package `{0}`")]
     UnreachableLockedPackage(String),
+    #[error("{0}")]
+    Validation(String),
+}
+
+fn validate_dependency_spec(name: &str, spec: &DependencySpec) -> Result<(), ManifestError> {
+    semver::VersionReq::parse(spec.version_req()).map_err(|_| {
+        ManifestError::InvalidVersionReq {
+            dep: name.to_string(),
+            req: spec.version_req().to_string(),
+        }
+    })?;
+    for feature in spec.features() {
+        validate_feature_name(feature)?;
+    }
+    Ok(())
+}
+
+fn validate_feature_name(name: &str) -> Result<(), ManifestError> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(ManifestError::Validation(format!(
+            "invalid feature name `{name}`"
+        )));
+    }
+    if name.starts_with('-') || name.starts_with('_') || name.ends_with('-') || name.ends_with('_')
+    {
+        return Err(ManifestError::Validation(format!(
+            "invalid feature name `{name}`"
+        )));
+    }
+    for ch in name.chars() {
+        if !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_') {
+            return Err(ManifestError::Validation(format!(
+                "invalid feature name `{name}`"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_feature_member(
+    manifest: &Manifest,
+    feature: &str,
+    member: &str,
+) -> Result<(), ManifestError> {
+    if let Some(dep_name) = member.strip_prefix("dep:") {
+        validate_package_name(dep_name)?;
+        if !manifest.optional_dependencies.contains_key(dep_name) {
+            return Err(ManifestError::Validation(format!(
+                "invalid feature member `{member}` in feature `{feature}`: unknown optional dependency `{dep_name}`"
+            )));
+        }
+        return Ok(());
+    }
+
+    validate_feature_name(member)?;
+    if !manifest.features.contains_key(member) {
+        return Err(ManifestError::Validation(format!(
+            "invalid feature member `{member}` in feature `{feature}`: unknown feature `{member}`"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_feature_graph(
+    manifest: &Manifest,
+    feature: &str,
+    validated: &mut HashSet<String>,
+    visiting: &mut Vec<String>,
+) -> Result<(), ManifestError> {
+    if validated.contains(feature) {
+        return Ok(());
+    }
+    if let Some(pos) = visiting.iter().position(|entry| entry == feature) {
+        let mut cycle = visiting[pos..].to_vec();
+        cycle.push(feature.to_string());
+        return Err(ManifestError::Validation(format!(
+            "package feature cycle detected: {}",
+            cycle.join(" -> ")
+        )));
+    }
+    let Some(members) = manifest.features.get(feature) else {
+        return Ok(());
+    };
+    visiting.push(feature.to_string());
+    for member in members {
+        if member.starts_with("dep:") {
+            continue;
+        }
+        validate_feature_graph(manifest, member, validated, visiting)?;
+    }
+    visiting.pop();
+    validated.insert(feature.to_string());
+    Ok(())
+}
+
+fn normalize_feature_list(features: &[String]) -> Vec<String> {
+    let mut values = features.to_vec();
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn validate_cli_binary_name(name: &str) -> Result<(), ManifestError> {
@@ -488,6 +651,49 @@ entry = "src/main.fdn"
     }
 
     #[test]
+    fn accepts_optional_dependencies_and_features() {
+        let text = r#"
+[package]
+name = "demo"
+version = "1.0.0"
+
+[dependencies]
+core = "^1"
+
+[optional-dependencies]
+python-runtime = { version = "^3", features = ["c-api"] }
+
+[features]
+pybindings = ["dep:python-runtime"]
+"#;
+
+        let manifest: Manifest = text.parse().expect("valid manifest");
+        assert!(
+            manifest
+                .optional_dependencies
+                .contains_key("python-runtime")
+        );
+        assert!(manifest.features.contains_key("pybindings"));
+    }
+
+    #[test]
+    fn rejects_unknown_optional_dependency_feature_member() {
+        let text = r#"
+[package]
+name = "demo"
+version = "1.0.0"
+
+[features]
+pybindings = ["dep:python-runtime"]
+"#;
+
+        let error = text
+            .parse::<Manifest>()
+            .expect_err("unknown optional dep reference should fail");
+        assert!(error.to_string().contains("unknown optional dependency"));
+    }
+
+    #[test]
     fn rejects_invalid_cli_entry_path() {
         let text = r#"
 [package]
@@ -512,7 +718,7 @@ name = "demo"
 version = "1.0.0"
 
 [dependencies]
-other-package = "^1.2"
+other-package = { version = "^1.2", features = ["pybindings"] }
 "#
         .parse()
         .expect("valid manifest");
@@ -525,6 +731,7 @@ schema_version = 1
 name = "other-package"
 module = "other_package"
 version = "1.2.3"
+features = ["pybindings"]
 
 [packages.dependencies]
 leaf-package = "^2.0"
@@ -570,5 +777,36 @@ version = "2.1.0"
             .validate_against_manifest(&manifest)
             .expect_err("missing direct dep should fail");
         assert!(error.to_string().contains("missing direct dependency"));
+    }
+
+    #[test]
+    fn rejects_lockfile_when_direct_dependency_features_do_not_match() {
+        let manifest: Manifest = r#"
+[package]
+name = "demo"
+version = "1.0.0"
+
+[dependencies]
+other-package = { version = "^1.2", features = ["pybindings"] }
+"#
+        .parse()
+        .expect("valid manifest");
+
+        let lock = Lockfile::from_toml(
+            br#"
+schema_version = 1
+
+[[packages]]
+name = "other-package"
+module = "other_package"
+version = "1.2.3"
+"#,
+        )
+        .expect("valid lockfile");
+
+        let error = lock
+            .validate_against_manifest(&manifest)
+            .expect_err("feature mismatch should fail");
+        assert!(error.to_string().contains("enables features"));
     }
 }
