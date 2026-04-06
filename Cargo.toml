@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/dal-common",
-    "crates/dal-manifest",
-    "crates/dal-db",
-    "crates/dal-auth",
-    "crates/dal-storage",
-    "crates/dal-index",
-    "crates/dal-server",
-    "crates/dal-worker",
+  "crates/dal-common",
+  "crates/dal-manifest",
+  "crates/dal-db",
+  "crates/dal-auth",
+  "crates/dal-storage",
+  "crates/dal-index",
+  "crates/dal-server",
+  "crates/dal-worker",
 ]
 
 [workspace.package]
@@ -44,27 +44,27 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tower = { version = "0.5" }
 tower-http = { version = "0.6", features = [
-    "cors",
-    "trace",
-    "request-id",
-    "sensitive-headers",
-    "limit",
-    "compression-gzip",
+  "cors",
+  "trace",
+  "request-id",
+  "sensitive-headers",
+  "limit",
+  "compression-gzip",
 ] }
 
 # ── Serialisation ────────────────────────────────────────────────────────────
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.9"
+toml = "1.1"
 
 # ── Database ─────────────────────────────────────────────────────────────────
 sqlx = { version = "0.8", features = [
-    "postgres",
-    "uuid",
-    "chrono",
-    "runtime-tokio-rustls",
-    "migrate",
-    "json",
+  "postgres",
+  "uuid",
+  "chrono",
+  "runtime-tokio-rustls",
+  "migrate",
+  "json",
 ] }
 
 # ── AWS SDK ──────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ aws-smithy-runtime-api = "1"
 
 # ── Auth / Crypto ────────────────────────────────────────────────────────────
 jsonwebtoken = "10"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 rand = { version = "0.10" }
 base64 = "0.22"
@@ -90,9 +90,9 @@ url = { version = "2", features = ["serde"] }
 
 # ── HTTP client ──────────────────────────────────────────────────────────────
 reqwest = { version = "0.13", default-features = false, features = [
-    "json",
-    "rustls",
-    "multipart",
+  "json",
+  "rustls",
+  "multipart",
 ] }
 
 # ── Archive ──────────────────────────────────────────────────────────────────
