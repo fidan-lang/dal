@@ -201,32 +201,34 @@
 
    1. Trademark
 
-   The name "Dal", the Dal logo, and related branding are
+   The name "Dal", the Dal logo, and all related branding are
    trademarks of Kaan Gönüldinc (AppSolves).
 
-   This license does not grant permission to use the "Dal" name
-   or branding for competing package registries, forks presented
-   as the official registry, or unofficial distributions without
-   explicit written permission.
+   This license does NOT grant permission to use the "Dal" name,
+   logo, or branding for:
 
-   Forks or modified versions of Dal must not present themselves
-   as the official Dal package registry for the Fidan language.
+   • competing package registries
+   • forks or modified versions
+   • unofficial distributions
+
+   without explicit prior written permission.
+
+   Any fork or modified version of the software must:
+
+   • use a different name
+   • not imply affiliation with the original Dal Project
+   • not present itself as the official Dal package registry
 
 
-   2. Commercial Redistribution of the Registry
+   2. Commercial Use Clarification
 
-   The Dal™ package registry — including its source code, server,
-   worker, index infrastructure, and official hosted service — may
-   not be sold or marketed as a standalone commercial product or
-   competing registry service without explicit written permission
-   from the copyright holder.
+   This project is licensed under the Apache License 2.0.
 
-   This restriction does NOT apply to:
+   Commercial use, distribution, hosting, and offering the software
+   as a service are fully permitted under the terms of the Apache License 2.0.
 
-   • self-hosting Dal for private or internal use
-   • distribution through open-source package managers or OS repositories
-   • inclusion of Dal in development environments or toolchains
-   • packages published to and distributed through Dal
+   However, any commercial use of the "Dal" name, branding, or identity
+   remains subject to the trademark restrictions above.
 
-   Packages published to Dal may be used, distributed, and sold
-   commercially without restriction.
+   No entity may imply official affiliation, endorsement, or origin
+   from the Dal Project without explicit permission.
