@@ -1,7 +1,11 @@
-use std::{net::IpAddr, num::NonZeroU32, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    num::NonZeroU32,
+    sync::Arc,
+};
 
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, Method, Request},
     middleware::Next,
     response::Response,
@@ -25,7 +29,7 @@ type Limiter = GovRateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddlew
 ///
 /// Default quota: 120 requests / 60 seconds per IP.
 pub struct RateLimiter {
-    map: DashMap<IpAddr, Arc<Limiter>>,
+    map: DashMap<IpAddr, (Arc<Limiter>, std::time::Instant)>,
 }
 
 impl RateLimiter {
@@ -37,18 +41,22 @@ impl RateLimiter {
 
     /// Returns `true` if the request should be allowed, `false` if limited.
     pub fn check(&self, ip: IpAddr) -> bool {
-        let limiter = self
-            .map
-            .entry(ip)
-            .or_insert_with(|| {
-                let quota = Quota::with_period(Duration::from_secs(60))
-                    .unwrap()
-                    .allow_burst(NonZeroU32::new(120).unwrap());
-                Arc::new(GovRateLimiter::direct(quota))
-            })
-            .clone();
-
-        limiter.check().is_ok()
+        if self.map.len() >= 10_000 {
+            self.map
+                .retain(|_, (_, seen)| seen.elapsed() < std::time::Duration::from_secs(600));
+            if self.map.len() >= 10_000 && !self.map.contains_key(&ip) {
+                return false;
+            }
+        }
+        let mut entry = self.map.entry(ip).or_insert_with(|| {
+            let quota = Quota::per_minute(NonZeroU32::new(120).unwrap());
+            (
+                Arc::new(GovRateLimiter::direct(quota)),
+                std::time::Instant::now(),
+            )
+        });
+        entry.1 = std::time::Instant::now();
+        entry.0.check().is_ok()
     }
 }
 
@@ -68,9 +76,14 @@ pub async fn enforce_auth_rate_limit(
         return Ok(next.run(req).await);
     }
 
-    let ip = extract_client_ip(req.headers()).unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|v| v.0.ip())
+        .unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    let ip = extract_client_ip(req.headers(), peer, &state.cfg.trusted_proxies);
     if !state.rate.check(ip) {
-        warn!(%ip, path, "auth rate limit exceeded");
+        warn!(path, "auth rate limit exceeded");
         return Err(DalError::RateLimited);
     }
 
@@ -89,16 +102,35 @@ fn is_rate_limited_auth_path(path: &str) -> bool {
     )
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    for header_name in ["x-forwarded-for", "x-real-ip"] {
-        if let Some(header) = headers.get(header_name)
-            && let Ok(raw) = header.to_str()
-            && let Some(candidate) = raw.split(',').next().map(str::trim)
-            && let Ok(ip) = candidate.parse::<IpAddr>()
-        {
-            return Some(ip);
-        }
+fn extract_client_ip(headers: &HeaderMap, peer: IpAddr, trusted_proxies: &[IpAddr]) -> IpAddr {
+    // The reverse proxy must overwrite this single-address header, not append a chain.
+    if trusted_proxies.contains(&peer)
+        && let Some(ip) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok())
+    {
+        return ip;
     }
-
-    None
+    peer
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn forwarded_ip_requires_explicit_proxy_trust() {
+        let peer: IpAddr = "127.0.0.1".parse().unwrap();
+        let other: IpAddr = "192.0.2.1".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "192.0.2.1".parse().unwrap());
+        assert_eq!(extract_client_ip(&headers, peer, &[]), peer);
+        assert_eq!(extract_client_ip(&headers, peer, &[peer]), other);
+        headers.insert("x-forwarded-for", "192.0.2.1, 192.0.2.2".parse().unwrap());
+        assert_eq!(extract_client_ip(&headers, peer, &[peer]), peer);
+        let limiter = RateLimiter::new();
+        for _ in 0..120 {
+            assert!(limiter.check(peer));
+        }
+        assert!(!limiter.check(peer));
+    }
 }

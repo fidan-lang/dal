@@ -1,6 +1,11 @@
 use dal_common::error::DalError;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+const MAX_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_METADATA_BYTES: u64 = 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+const MAX_README_BYTES: u64 = 512 * 1024;
 use std::io::Read;
 use std::path::{Component, Path};
 
@@ -46,7 +51,7 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
 
     // Decompress and iterate entries
     let gz = flate2::read::GzDecoder::new(bytes);
-    let mut archive = tar::Archive::new(gz);
+    let mut archive = tar::Archive::new(gz.take(MAX_UNCOMPRESSED_BYTES + 1));
 
     let compressed_size = bytes.len() as u64;
     let mut uncompressed_size: u64 = 0;
@@ -61,7 +66,15 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         .entries()
         .map_err(|e| DalError::ArchiveInvalid(format!("cannot read archive entries: {e}")))?;
 
-    for entry in entries {
+    let mut seen = BTreeSet::new();
+    let mut destination_parents: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut destinations = BTreeMap::new();
+    let mut spellings = BTreeMap::new();
+    for (count, entry) in entries.enumerate() {
+        if count >= MAX_ARCHIVE_ENTRIES {
+            return Err(DalError::ArchiveInvalid("too many archive entries".into()));
+        }
         let mut entry =
             entry.map_err(|e| DalError::ArchiveInvalid(format!("bad archive entry: {e}")))?;
         let entry_type = entry.header().entry_type();
@@ -70,12 +83,7 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
             .path()
             .map_err(|e| DalError::ArchiveInvalid(format!("bad path in archive: {e}")))?;
 
-        if entry_type.is_symlink()
-            || entry_type.is_hard_link()
-            || entry_type.is_block_special()
-            || entry_type.is_character_special()
-            || entry_type.is_fifo()
-        {
+        if entry_type != tar::EntryType::Regular && entry_type != tar::EntryType::Directory {
             return Err(DalError::ArchiveInvalid(
                 "archive contains unsupported link or special file entries".into(),
             ));
@@ -85,6 +93,22 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         if components.is_empty() {
             continue;
         }
+        let normalized_full = components.join("/");
+        if !seen.insert(normalized_full.to_ascii_lowercase()) {
+            return Err(DalError::ArchiveInvalid("duplicate archive path".into()));
+        }
+        let mut prefix = String::new();
+        for component in &components {
+            prefix.push_str(component);
+            prefix.push('/');
+            if let Some(previous) = spellings.insert(prefix.to_ascii_lowercase(), prefix.clone())
+                && previous != prefix
+            {
+                return Err(DalError::ArchiveInvalid(
+                    "case-aliased archive paths".into(),
+                ));
+            }
+        }
 
         let size = entry
             .header()
@@ -93,7 +117,9 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         uncompressed_size = uncompressed_size.saturating_add(size);
 
         // Archive bomb: ratio check
-        if compressed_size > 0 && uncompressed_size / compressed_size > 100 {
+        if uncompressed_size > MAX_UNCOMPRESSED_BYTES
+            || uncompressed_size > compressed_size.saturating_mul(100)
+        {
             return Err(DalError::ArchiveInvalid(
                 "archive expansion ratio exceeds 100:1 (possible archive bomb)".into(),
             ));
@@ -115,6 +141,49 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         validate_top_level_entry(&components)?;
 
         let normalized = components[1..].join("/");
+        if normalized != "src" || entry_type != tar::EntryType::Directory {
+            let destination = normalized
+                .strip_prefix("src/")
+                .unwrap_or(&normalized)
+                .to_string();
+            let segments: Vec<_> = destination.split('/').collect();
+            for depth in 1..segments.len() {
+                let prefix = segments[..depth].join("/");
+                if let Some((_, previous_kind)) = destinations.get(&prefix.to_ascii_lowercase())
+                    && *previous_kind != tar::EntryType::Directory
+                {
+                    return Err(DalError::ArchiveInvalid(
+                        "file used as parent directory".into(),
+                    ));
+                }
+                if let Some(previous) =
+                    destination_parents.insert(prefix.to_ascii_lowercase(), prefix.clone())
+                    && previous != prefix
+                {
+                    return Err(DalError::ArchiveInvalid(
+                        "remapped case-aliased directories".into(),
+                    ));
+                }
+            }
+            if entry_type.is_file()
+                && destination_parents.contains_key(&destination.to_ascii_lowercase())
+            {
+                return Err(DalError::ArchiveInvalid(
+                    "file collides with implicit directory".into(),
+                ));
+            }
+            if let Some((previous_name, previous_kind)) = destinations.insert(
+                destination.to_ascii_lowercase(),
+                (destination.clone(), entry_type),
+            ) && (previous_name != destination
+                || previous_kind != tar::EntryType::Directory
+                || entry_type != tar::EntryType::Directory)
+            {
+                return Err(DalError::ArchiveInvalid(
+                    "entries collide after source-path remapping".into(),
+                ));
+            }
+        }
 
         if entry_type.is_file() {
             files.insert(normalized.clone());
@@ -127,6 +196,11 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
                 ));
             }
 
+            if size > MAX_METADATA_BYTES {
+                return Err(DalError::ArchiveInvalid(
+                    "dal.toml exceeds metadata size limit".into(),
+                ));
+            }
             let mut buf = Vec::new();
             entry
                 .read_to_end(&mut buf)
@@ -140,6 +214,7 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         {
             let mut buf = Vec::new();
             entry
+                .take(MAX_README_BYTES)
                 .read_to_end(&mut buf)
                 .map_err(|e| DalError::ArchiveInvalid(format!("cannot read README: {e}")))?;
             // Limit README to 512 KiB
@@ -153,6 +228,14 @@ pub fn validate_archive(bytes: &[u8], max_bytes: u64) -> Result<ArchiveInfo, Dal
         }
     }
 
+    let mut reader = archive.into_inner();
+    std::io::copy(&mut reader, &mut std::io::sink())
+        .map_err(|error| DalError::ArchiveInvalid(format!("invalid gzip stream: {error}")))?;
+    if reader.limit() == 0 {
+        return Err(DalError::ArchiveInvalid(
+            "archive exceeds uncompressed size limit".into(),
+        ));
+    }
     let root_dir = match top_level_entries.len() {
         0 => {
             return Err(DalError::ArchiveInvalid(
@@ -191,7 +274,7 @@ pub fn extract_file(
 ) -> Result<Option<Vec<u8>>, DalError> {
     let target_rel = normalize_relative_path(rel_path)?;
     let gz = flate2::read::GzDecoder::new(bytes);
-    let mut archive = tar::Archive::new(gz);
+    let mut archive = tar::Archive::new(gz.take(MAX_UNCOMPRESSED_BYTES + 1));
 
     let entries = archive
         .entries()
@@ -215,6 +298,11 @@ pub fn extract_file(
 
         let normalized = components[1..].join("/");
         if normalized == target_rel {
+            if entry.size() > MAX_METADATA_BYTES {
+                return Err(DalError::ArchiveInvalid(
+                    "requested metadata exceeds size limit".into(),
+                ));
+            }
             let mut buf = Vec::new();
             entry
                 .read_to_end(&mut buf)
@@ -227,6 +315,36 @@ pub fn extract_file(
 }
 
 fn normalize_entry_components(path: &Path) -> Result<Vec<String>, DalError> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| DalError::ArchiveInvalid("path is not UTF-8".into()))?;
+    if text.len() > 4096 || text.contains(['\\', ':']) || text.split('/').count() > 65 {
+        return Err(DalError::ArchiveInvalid(
+            "unsafe portable archive path".into(),
+        ));
+    }
+    for part in text.trim_end_matches('/').split('/') {
+        let stem = part
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if part.is_empty()
+            || part == "."
+            || part.ends_with(['.', ' '])
+            || part
+                .chars()
+                .any(|ch| ch.is_control() || matches!(ch, '<' | '>' | '"' | '|' | '?' | '*'))
+            || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+        {
+            return Err(DalError::ArchiveInvalid(
+                "unsafe portable archive component".into(),
+            ));
+        }
+    }
     let mut components = Vec::new();
     for component in path.components() {
         match component {
@@ -309,9 +427,9 @@ mod tests {
                 header.set_mode(0o644);
                 header.set_size(contents.len() as u64);
                 header.set_cksum();
-                builder
-                    .append_data(&mut header, path, contents)
-                    .expect("append tar entry");
+                header.as_mut_bytes()[..path.len()].copy_from_slice(path.as_bytes());
+                header.set_cksum();
+                builder.append(&header, contents).expect("append tar entry");
             }
             builder.finish().expect("finish tar");
         }
@@ -319,6 +437,36 @@ mod tests {
         let mut gz = GzEncoder::new(Vec::new(), Compression::default());
         gz.write_all(&tar_bytes).expect("write gzip");
         gz.finish().expect("finish gzip")
+    }
+
+    #[test]
+    fn rejects_duplicate_portable_paths_and_corrupt_gzip() {
+        for path in [
+            "demo-0.1.0/src/init.fdn",
+            "demo-0.1.0/src/dal.toml",
+            "demo-0.1.0/src\\escape",
+            "demo-0.1.0/src/../escape",
+            "demo-0.1.0/src/NUL.txt",
+            "demo-0.1.0/src/file:stream",
+            "demo-0.1.0/src/name.",
+        ] {
+            let bytes = archive_bytes(vec![
+                ("demo-0.1.0/dal.toml", EntryType::Regular, b"manifest"),
+                ("demo-0.1.0/src/init.fdn", EntryType::Regular, b"source"),
+                (path, EntryType::Regular, b"attack"),
+            ]);
+            assert!(
+                validate_archive(&bytes, 1024 * 1024).is_err(),
+                "accepted {path}"
+            );
+        }
+        let mut bytes = archive_bytes(vec![
+            ("demo-0.1.0/dal.toml", EntryType::Regular, b"manifest"),
+            ("demo-0.1.0/src/init.fdn", EntryType::Regular, b"source"),
+        ]);
+        let crc = bytes.len() - 8;
+        bytes[crc] ^= 1;
+        assert!(validate_archive(&bytes, 1024 * 1024).is_err());
     }
 
     #[test]

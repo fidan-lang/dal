@@ -1,8 +1,12 @@
 /// <reference types="node" />
 
 import { defineConfig } from "@playwright/test";
+import { localTestEndpoint } from "./e2e/local-test-endpoints.mjs";
 
-const baseURL = process.env.DAL_WEB_BASE_URL ?? "http://localhost:4174";
+const baseURL = localTestEndpoint(
+  process.env.DAL_WEB_BASE_URL ?? "http://127.0.0.1:4174",
+  "web",
+);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -19,7 +23,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "off",
     browserName: "chromium",
-    channel: process.env.CI ? undefined : "chrome",
+    // Use the browser revision pinned by package-lock, matching CI.
+    // Explicit host-browser comparison remains available for investigation.
+    channel: process.env.DAL_BROWSER_CHANNEL,
   },
   webServer: process.env.DAL_WEB_BASE_URL
     ? undefined

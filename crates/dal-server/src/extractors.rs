@@ -23,7 +23,7 @@ pub struct AuthActor {
 
 impl AuthActor {
     pub fn is_admin(&self) -> bool {
-        self.user.is_admin
+        self.user.is_admin && self.api_token.is_none()
     }
 
     pub fn require_admin(&self) -> Result<(), DalError> {
@@ -35,6 +35,9 @@ impl AuthActor {
     }
 
     pub fn require_scope(&self, scope: &str) -> Result<(), DalError> {
+        if !self.user.email_verified {
+            return Err(DalError::Forbidden);
+        }
         if let Some(token) = &self.api_token
             && !has_scope(&token.scopes, scope)
         {

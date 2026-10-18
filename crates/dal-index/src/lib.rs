@@ -17,6 +17,8 @@ pub struct IndexEntry {
     pub name: String,
     /// SemVer version string.
     pub vers: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidan: Option<String>,
     /// Dependency list.
     pub deps: Vec<IndexDep>,
     /// SHA-256 hex checksum of the `.tar.gz`.
@@ -90,9 +92,11 @@ pub fn entry_from_version(
         });
     }
 
+    deps.sort_by(|a, b| a.name.cmp(&b.name));
     IndexEntry {
         name: name.to_string(),
         vers: version.to_string(),
+        fidan: manifest.package.fidan.clone(),
         deps,
         cksum: checksum.to_string(),
         yanked,

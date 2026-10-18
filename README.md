@@ -8,7 +8,7 @@
 
 **The official package registry for the [Fidan](https://github.com/fidan-lang/fidan) programming language.**
 
-[![License](https://img.shields.io/badge/license-Apache%202.0%20(Modified)-blue.svg)](LICENSE) &nbsp; ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
+[![License](https://img.shields.io/badge/license-Apache%202.0%20(Modified)-blue.svg)](LICENSE) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
 
 [Overview](#overview) • [Architecture](#architecture) • [Getting Started](#getting-started) • [API Reference](#api-reference) • [Contributing](#contributing)
 
@@ -63,7 +63,7 @@ PostgreSQL        dal-packages-  dal-jobs.fifo
 
 - Rust (stable, edition 2024)
 - Docker (for local Postgres)
-- Node.js 20+ (for frontend)
+- Node.js 24 (CI baseline; compatible Vite 7 requires Node 20.19+ or 22.12+)
 - AWS account with Cognito and SQS configured, plus an S3-compatible object store such as Cloudflare R2 (or LocalStack for local dev)
 
 ### 1. Clone
@@ -104,11 +104,11 @@ cargo run -p dal-worker
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-The frontend dev server starts at ``http://localhost:5173`` and proxies API calls to ``http://localhost:8080``.
+Set `PUBLIC_API_BASE=http://localhost:8080` explicitly for local frontend development before `npm run dev`. Without it the client defaults to the public API; there is no automatic local proxy. The dev server listens at `http://localhost:5173`.
 
 ### 7. Run the test stack
 
@@ -127,17 +127,26 @@ scripts\test.bat
 scripts\test.bat --with-cognito
 ```
 
-### 8. Verify worker-delivered emails locally
+### 8. Isolated local release gate
 
-For local worker testing without calling the real Mailjet API, use the helper
-scripts in `LOCAL/`:
-
-```powershell
-LOCAL\start-mail-sink.ps1
-LOCAL\start-dal-worker.ps1
+```bash
+npm ci --prefix frontend
+cd frontend
+npx playwright install chromium
+cd ..
+node scripts/test-local.mjs --with-cognito --e2e
 ```
 
-The sink writes captured Mailjet-compatible requests to `LOCAL/mail-sink.log`.
+This starts a dedicated disposable PostgreSQL/LocalStack project, private Cognito emulator,
+API, worker and mail sink using fake credentials and literal IPv4 loopback. It ignores production `.env` files,
+requires free local ports, and cleans up only its own processes/containers. The browser
+lifecycle uses the sibling `../fidan/target/debug/fidan` (`.exe` on Windows) and local
+`../args` candidate; build the matching compiler first. Captured emails contain local
+verification/reset tokens; keep `target/audit-logs/` private and ignored. Browser tests use the Playwright-pinned Chromium revision, matching CI; `DAL_BROWSER_CHANNEL=chrome` explicitly selects system Chrome for comparison.
+
+For built local OCI images, run `node scripts/test-images.mjs`. It verifies non-root,
+read-only execution, health/readiness and clean shutdown against disposable services.
+This is an idle smoke check, not production capacity certification.
 
 ### 9. Install Git hooks
 
@@ -157,7 +166,7 @@ scripts\install-git-hooks.ps1
 
 ## API Reference
 
-All endpoints are under the base URL configured in ``.env`` (``DAL_BASE_URL``).
+API listening uses `DAL_LISTEN_ADDR`. `DAL_BASE_URL` is the frontend origin used for links/CORS; it does not change API route paths.
 
 ### Auth
 
@@ -215,6 +224,31 @@ All endpoints are under the base URL configured in ``.env`` (``DAL_BASE_URL``).
 |---|---|---|
 | ``GET`` | ``/health`` | Liveness check |
 | ``GET`` | ``/readyz`` | Readiness check (includes DB) |
+
+---
+
+## Package contract and relaunch status
+
+The canonical client is `fidan dal`. Package names such as `args` need no `fidan-`
+prefix. This local relaunch candidate accepts optional `[package].fidan` SemVer
+requirements; omission preserves legacy compatibility. The matching client validates
+compiler compatibility and SHA-256 before installation, resolves intersecting graphs
+with bounded backtracking, and records checksums in schema-1 `dal.lock` files.
+New resolution excludes yanked versions; an existing exact checksum lock may reinstall
+its yanked version. Immutable archives remain downloadable. A checksum authenticates
+bytes relative to the trusted HTTPS registry/index, not a compromised registry.
+
+Archives are limited to 50 MiB compressed, 256 MiB expanded, 100:1 expansion and 10,000
+entries. Only regular files/directories with portable relative paths are accepted.
+Publishing holds a package-scoped database lock and uses per-attempt object keys;
+unknown commit outcomes retain the object for reconciliation. API uploads are limited
+to two concurrent archive operations per process; lower `DAL_MAX_UPLOAD_BYTES` if needed.
+
+Normal CI verifies without deploying. AWS and Pages deployment workflows require manual
+owner approval; AWS ECS/ECR remains dormant. GHCR/Compose candidates are prepared only.
+See [the audit report](ENGINEERING_AUDIT_REPORT.md), [test matrix](E2E_TEST_MATRIX.md),
+[deployment runbook](DEPLOYMENT_RUNBOOK.md) and [release gates](RELEASE_CHECKLIST.md).
+No production relaunch or public `args` package is claimed by this branch.
 
 ---
 

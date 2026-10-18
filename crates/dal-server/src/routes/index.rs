@@ -29,8 +29,11 @@ async fn index_file(
 
     let mut entries: Vec<IndexEntry> = Vec::new();
     for ver in &versions {
-        if let Ok(manifest) =
-            serde_json::from_value::<dal_manifest::Manifest>(ver.manifest.clone().0)
+        let manifest = serde_json::from_value::<dal_manifest::Manifest>(ver.manifest.clone().0)
+            .map_err(|_| {
+                tracing::error!(version_id = %ver.id, "invalid persisted package manifest");
+                DalError::Internal(anyhow::anyhow!("invalid persisted package manifest"))
+            })?;
         {
             let entry = entry_from_version(
                 &pkg.name,

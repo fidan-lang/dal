@@ -1,0 +1,319 @@
+name: Legacy AWS deployment (manual approval only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Explicit approval to resume dormant AWS infrastructure: RESUME_DORMANT_AWS"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ─── Test + Lint ────────────────────────────────────────────────────────────
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate issue templates
+        run: pwsh ./scripts/validate-issue-templates.ps1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: npm run check
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run non-server workspace tests
+        run: cargo test --workspace --all-targets --exclude dal-server
+
+      - name: Run dal-server integration stack
+        run: bash ./scripts/test.sh --with-cognito
+
+  # ─── Detect backend changes that warrant an ECS deploy ─────────────────────
+  changes:
+    name: Detect backend changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.manual.outputs.backend || steps.filter.outputs.backend }}
+
+    steps:
+      - name: Mark manual dispatch as deployable
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "backend=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v6
+
+      - name: Filter backend paths
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            backend:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'docker-compose.yml'
+              - 'docker-compose.test.yml'
+              - 'crates/**'
+              - 'migrations/**'
+              - 'scripts/test.sh'
+              - 'scripts/test.bat'
+              - 'scripts/localstack-init.sh'
+              - 'scripts/localstack-init-test.sh'
+              - '.github/workflows/ci.yaml'
+
+  # ─── Build & Push Docker images (main branch only) ──────────────────────────
+  docker:
+    name: Build & Push Docker
+    needs: [ test, changes ]
+    runs-on: ubuntu-latest
+    environment: aws-deploy
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirmation == 'RESUME_DORMANT_AWS'
+    outputs:
+      server_digest: ${{ steps.build-server.outputs.digest }}
+      worker_digest: ${{ steps.build-worker.outputs.digest }}
+    permissions:
+      id-token: write # for OIDC
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: vars
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push dal-server
+        id: build-server
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: server
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-server:${{ steps.vars.outputs.tag }}
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-server:latest
+          cache-from: type=gha,scope=dal-server
+          cache-to: type=gha,mode=max,scope=dal-server
+
+      - name: Build and push dal-worker
+        id: build-worker
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: worker
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-worker:${{ steps.vars.outputs.tag }}
+            ${{ secrets.ECR_REGISTRY }}/fidan/dal-worker:latest
+          cache-from: type=gha,scope=dal-worker
+          cache-to: type=gha,mode=max,scope=dal-worker
+
+  # ─── Deploy to ECS (main branch only, after Docker push) ────────────────────
+  deploy:
+    name: Deploy to ECS
+    needs: docker
+    runs-on: ubuntu-latest
+    environment: aws-deploy
+    if: |
+      needs.docker.result == 'success'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Prepare ECS task definitions
+        run: |
+          set -euo pipefail
+
+          SERVER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-server@${{ needs.docker.outputs.server_digest }}"
+          WORKER_IMAGE="${{ secrets.ECR_REGISTRY }}/fidan/dal-worker@${{ needs.docker.outputs.worker_digest }}"
+
+          aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVER_SERVICE }}" \
+            > server-service.json
+
+          aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_WORKER_SERVICE }}" \
+            > worker-service.json
+
+          SERVER_TASK_DEF_ARN="$(jq -r '.services[0].taskDefinition // (.services[0].deployments[] | select(.status == "PRIMARY") | .taskDefinition) // empty' server-service.json | head -n 1)"
+          WORKER_TASK_DEF_ARN="$(jq -r '.services[0].taskDefinition // (.services[0].deployments[] | select(.status == "PRIMARY") | .taskDefinition) // empty' worker-service.json | head -n 1)"
+
+          if [ -z "$SERVER_TASK_DEF_ARN" ] || [ "$SERVER_TASK_DEF_ARN" = "None" ]; then
+            echo "Failed to resolve dal-server task definition from ECS service."
+            cat server-service.json
+            exit 1
+          fi
+
+          if [ -z "$WORKER_TASK_DEF_ARN" ] || [ "$WORKER_TASK_DEF_ARN" = "None" ]; then
+            echo "Failed to resolve dal-worker task definition from ECS service."
+            cat worker-service.json
+            exit 1
+          fi
+
+          aws ecs describe-task-definition \
+            --task-definition "$SERVER_TASK_DEF_ARN" \
+            --query 'taskDefinition' \
+            > server-task-definition.raw.json
+
+          aws ecs describe-task-definition \
+            --task-definition "$WORKER_TASK_DEF_ARN" \
+            --query 'taskDefinition' \
+            > worker-task-definition.raw.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' server-task-definition.raw.json > server-task-definition.base.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' worker-task-definition.raw.json > worker-task-definition.base.json
+
+          jq \
+            --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-server" \
+            --arg image "$SERVER_IMAGE" \
+            '.containerDefinitions |= map(
+              if (.image | startswith($repo))
+              then .image = $image
+              else .
+              end
+            )' server-task-definition.base.json > server-task-definition.json
+
+          jq \
+            --arg repo "${{ secrets.ECR_REGISTRY }}/fidan/dal-worker" \
+            --arg image "$WORKER_IMAGE" \
+            '.containerDefinitions |= map(
+              if (.image | startswith($repo))
+              then .image = $image
+              else .
+              end
+            )' worker-task-definition.base.json > worker-task-definition.json
+
+          jq -e --arg image "$SERVER_IMAGE" \
+            'any(.containerDefinitions[]; .image == $image)' \
+            server-task-definition.json >/dev/null
+
+          jq -e --arg image "$WORKER_IMAGE" \
+            'any(.containerDefinitions[]; .image == $image)' \
+            worker-task-definition.json >/dev/null
+
+      - name: Register and deploy dal-server task definition
+        run: |
+          set -euo pipefail
+
+          SERVER_TASK_DEF_ARN="$(aws ecs register-task-definition \
+            --cli-input-json file://server-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --task-definition "$SERVER_TASK_DEF_ARN" \
+            --force-new-deployment \
+            --region "${{ vars.AWS_REGION }}"
+
+      - name: Register and deploy dal-worker task definition
+        run: |
+          set -euo pipefail
+
+          WORKER_TASK_DEF_ARN="$(aws ecs register-task-definition \
+            --cli-input-json file://worker-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --task-definition "$WORKER_TASK_DEF_ARN" \
+            --force-new-deployment \
+            --region "${{ vars.AWS_REGION }}"
+
+      - name: Wait for dal-server stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVER_SERVICE }}" \
+            --region "${{ vars.AWS_REGION }}"
+
+      - name: Wait for dal-worker stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_WORKER_SERVICE }}" \
+            --region "${{ vars.AWS_REGION }}"

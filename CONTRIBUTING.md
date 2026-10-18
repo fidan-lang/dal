@@ -37,9 +37,15 @@ cargo run -p dal-server
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
+
+The fully isolated backend/browser gate is documented in README:
+`node scripts/test-local.mjs --with-cognito --e2e`. It uses fake credentials and a private
+Cognito state directory; do not run integration tests against a production `.env`.
+For interactive frontend development set `PUBLIC_API_BASE=http://localhost:8080`;
+otherwise the API client defaults to the public registry.
 
 Before submitting a pull request, make sure the project builds successfully and all relevant tests pass.
 

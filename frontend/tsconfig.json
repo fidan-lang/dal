@@ -11,9 +11,5 @@
     "strict": true,
     "moduleResolution": "bundler"
   },
-  "exclude": [
-    "node_modules",
-    "svelte.config.js",
-    "vite.config.mts"
-  ]
+  "exclude": ["node_modules", "svelte.config.js", "vite.config.mts"]
 }

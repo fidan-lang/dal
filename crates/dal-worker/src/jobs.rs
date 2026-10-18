@@ -100,6 +100,7 @@ async fn handle_publish_notify(payload: &Value, mail: &MailjetClient) -> anyhow:
     let version = payload["version"].as_str().context("version")?;
     let publisher = payload["publisher"].as_str().unwrap_or("unknown");
 
+    let mut failures = 0;
     if let Some(owners) = payload["owners"].as_array() {
         for owner in owners {
             let email = owner["email"].as_str().unwrap_or_default();
@@ -123,10 +124,14 @@ async fn handle_publish_notify(payload: &Value, mail: &MailjetClient) -> anyhow:
                 .send(email, username, &subject, &html_body, &text_body)
                 .await
             {
-                warn!(error = %e, to = email, "failed to send publish notification");
+                failures += 1;
+                warn!(error = %e, "failed to send publish notification");
             }
         }
     }
 
+    if failures > 0 {
+        anyhow::bail!("{failures} publication notifications failed; queue retry required");
+    }
     Ok(())
 }

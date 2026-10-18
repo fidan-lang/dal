@@ -41,6 +41,10 @@ async fn create_token(
     actor: AuthActor,
     Json(body): Json<CreateTokenBody>,
 ) -> Result<(StatusCode, Json<Value>), DalError> {
+    // Token administration requires a verified interactive session, never another API token.
+    if actor.api_token.is_some() || !actor.user.email_verified {
+        return Err(DalError::Forbidden);
+    }
     if body.name.trim().is_empty() || body.name.len() > 64 {
         return Err(DalError::Validation("token name must be 1–64 chars".into()));
     }

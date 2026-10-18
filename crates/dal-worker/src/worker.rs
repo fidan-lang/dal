@@ -21,7 +21,8 @@ pub async fn run(
         let receive = sqs
             .receive_message()
             .queue_url(&queue_url)
-            .max_number_of_messages(10)
+            .max_number_of_messages(1)
+            .visibility_timeout(120)
             .wait_time_seconds(20) // long-polling
             .send();
 
@@ -51,7 +52,9 @@ pub async fn run(
 
             match serde_json::from_str::<serde_json::Value>(body) {
                 Ok(payload) => {
-                    match jobs::dispatch(&payload, &db, &mail).await {
+                    match dispatch_with_lease(&sqs, &queue_url, &receipt, &payload, &db, &mail)
+                        .await
+                    {
                         Ok(()) => {
                             // Delete the message — job succeeded
                             if let Err(e) = sqs
@@ -71,7 +74,7 @@ pub async fn run(
                     }
                 }
                 Err(e) => {
-                    error!(error = %e, body, "malformed job payload — deleting to prevent poison pill");
+                    error!(error = %e, "malformed job payload — deleting to prevent poison pill");
                     let _ = sqs
                         .delete_message()
                         .queue_url(&queue_url)
@@ -85,6 +88,31 @@ pub async fn run(
         if *shutdown.borrow() {
             tracing::info!("dal-worker completed current batch after shutdown request — exiting");
             return Ok(());
+        }
+    }
+}
+
+// Renew while user-visible delivery is in flight. SQS remains at-least-once:
+// a crash after provider acceptance but before delete can still duplicate email.
+async fn dispatch_with_lease(
+    sqs: &aws_sdk_sqs::Client,
+    queue: &str,
+    receipt: &str,
+    payload: &serde_json::Value,
+    db: &PgPool,
+    mail: &MailjetClient,
+) -> anyhow::Result<()> {
+    let job = jobs::dispatch(payload, db, mail);
+    tokio::pin!(job);
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            result = &mut job => return result,
+            _ = interval.tick() => {
+                sqs.change_message_visibility().queue_url(queue).receipt_handle(receipt)
+                    .visibility_timeout(120).send().await.map_err(|_|anyhow::anyhow!("queue lease renewal failed"))?;
+            }
         }
     }
 }

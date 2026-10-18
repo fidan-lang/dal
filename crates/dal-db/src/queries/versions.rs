@@ -16,7 +16,7 @@ pub struct NewPackageVersion<'a> {
 }
 
 pub async fn create(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     new_version: NewPackageVersion<'_>,
 ) -> DalResult<PackageVersion> {
     let v = sqlx::query_as::<_, PackageVersion>(
@@ -77,7 +77,11 @@ pub async fn latest(pool: &PgPool, package_id: Uuid) -> DalResult<Option<Package
     Ok(v)
 }
 
-pub async fn exists(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult<bool> {
+pub async fn exists(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    version: &str,
+) -> DalResult<bool> {
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(SELECT 1 FROM package_versions WHERE package_id = $1 AND version = $2)",
     )

@@ -1,15 +1,16 @@
 name: Deploy frontend to Cloudflare Pages
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "frontend/**"
-      - ".github/workflows/deploy-frontend.yaml"
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Explicit approval to deploy existing Pages project: DEPLOY_EXISTING_PAGES"
+        required: true
+        type: string
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'DEPLOY_EXISTING_PAGES'
     runs-on: ubuntu-latest
     environment: cloudflare-deploy
     permissions:

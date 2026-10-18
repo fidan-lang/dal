@@ -230,15 +230,19 @@ async fn remove_owner(
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
 
-    if !actor.is_admin() && !queries::packages::is_owner(&state.db, pkg.id, actor.user.id).await? {
-        return Err(DalError::Forbidden);
-    }
-
     let target = queries::users::get_public_by_username(&state.db, &username)
         .await?
         .ok_or_else(|| DalError::UserNotFound(username.clone()))?;
 
-    let owners = queries::packages::list_owners(&state.db, pkg.id).await?;
+    let mut tx = state.db.begin().await?;
+    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+        .bind(pkg.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !actor.is_admin() && !queries::packages::is_owner(&mut *tx, pkg.id, actor.user.id).await? {
+        return Err(DalError::Forbidden);
+    }
+    let owners = queries::packages::list_owners(&mut *tx, pkg.id).await?;
     let owner_count = owners.iter().filter(|owner| owner.role == "owner").count();
     let target_owner = owners.iter().find(|owner| owner.user_id == target.id);
 
@@ -257,13 +261,14 @@ async fn remove_owner(
         ));
     }
 
-    let removed = queries::packages::remove_owner(&state.db, pkg.id, target.id).await?;
+    let removed = queries::packages::remove_owner(&mut *tx, pkg.id, target.id).await?;
     if !removed {
         return Err(DalError::Validation(
             "user is not a member of this package".into(),
         ));
     }
 
+    tx.commit().await?;
     let _ = queries::audit::record(
         &state.db,
         Some(actor.user.id),
@@ -302,7 +307,14 @@ async fn transfer_ownership(
         .await?
         .ok_or_else(|| DalError::UserNotFound(body.to_username.clone()))?;
 
-    queries::packages::transfer_ownership(&state.db, pkg.id, actor.user.id, target.id).await?;
+    queries::packages::transfer_ownership(
+        &state.db,
+        pkg.id,
+        actor.user.id,
+        target.id,
+        actor.is_admin(),
+    )
+    .await?;
 
     let _ = queries::audit::record(
         &state.db,

@@ -43,3 +43,7 @@ aws-sdk-sqs.workspace = true
 hex.workspace = true
 sqlx.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+flate2.workspace = true
+tar.workspace = true

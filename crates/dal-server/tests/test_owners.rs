@@ -16,6 +16,9 @@ async fn seed_member_token(
     name: &str,
     scopes: &[String],
 ) -> String {
+    queries::users::set_email_verified(db, user_id)
+        .await
+        .unwrap();
     let token = raw_token();
     let prefix = token[..8].to_string();
 
@@ -496,4 +499,135 @@ async fn profile_updates_require_user_write_scope_for_api_tokens() {
 
     assert_eq!(status.as_u16(), 200);
     assert_eq!(body["display_name"], "Allowed");
+}
+
+#[tokio::test]
+async fn concurrent_owner_removal_self_transfer_and_stale_invites_preserve_authority() {
+    let app = common::TestApp::spawn().await;
+    let db = connect(
+        &std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://dal_test:test@127.0.0.1:5433/dal_test".into()),
+    )
+    .await
+    .unwrap();
+    let ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    let names = ids.map(|id| format!("owner-race-{}", id.simple()));
+    for i in 0..3 {
+        queries::users::create(
+            &db,
+            ids[i],
+            &names[i],
+            &format!("{}@example.test", names[i]),
+            &ids[i].to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let a = seed_member_token(&db, ids[0], "owner a", &[OWNER_SCOPE.into()]).await;
+    let b = seed_member_token(&db, ids[1], "owner b", &[OWNER_SCOPE.into()]).await;
+    let package_id = Uuid::new_v4();
+    let name = format!("owners-atomic-{}", package_id.simple());
+    queries::packages::create(
+        &db,
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &name,
+            description: None,
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &[],
+            categories: &[],
+        },
+    )
+    .await
+    .unwrap();
+    queries::packages::add_owner(&db, package_id, ids[0], "owner", None)
+        .await
+        .unwrap();
+    let response = app
+        .request_json(
+            Method::POST,
+            &format!("/packages/{name}/transfer"),
+            json!({"to_username":names[0]}),
+            Some(&a),
+        )
+        .await;
+    assert_eq!(response.status(), 422);
+    assert!(
+        queries::packages::is_owner(&db, package_id, ids[0])
+            .await
+            .unwrap()
+    );
+    for _ in 0..20 {
+        for id in &ids[..2] {
+            sqlx::query("INSERT INTO package_owners (package_id,user_id,role) VALUES ($1,$2,'owner') ON CONFLICT (package_id,user_id) DO UPDATE SET role='owner'").bind(package_id).bind(id).execute(&db).await.unwrap();
+        }
+        let first_path = format!("/packages/{name}/owners/{}", names[0]);
+        let second_path = format!("/packages/{name}/owners/{}", names[1]);
+        let (first, second) = tokio::join!(
+            app.request_json(Method::DELETE, &first_path, json!({}), Some(&a)),
+            app.request_json(Method::DELETE, &second_path, json!({}), Some(&b))
+        );
+        let mut codes = [first.status().as_u16(), second.status().as_u16()];
+        codes.sort();
+        assert_eq!(codes, [200, 422]);
+        assert_eq!(
+            queries::packages::list_owners(&db, package_id)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|o| o.role == "owner")
+                .count(),
+            1
+        );
+    }
+    for id in &ids[..2] {
+        sqlx::query("INSERT INTO package_owners (package_id,user_id,role) VALUES ($1,$2,'owner') ON CONFLICT (package_id,user_id) DO UPDATE SET role='owner'").bind(package_id).bind(id).execute(&db).await.unwrap();
+    }
+    let invite = queries::owner_invites::upsert(
+        &db,
+        package_id,
+        ids[2],
+        ids[0],
+        "fake-token-hash",
+        "owner",
+        chrono::Utc::now() + chrono::Duration::days(1),
+    )
+    .await
+    .unwrap();
+    queries::packages::remove_owner(&db, package_id, ids[0])
+        .await
+        .unwrap();
+    assert!(
+        queries::owner_invites::accept(&db, invite.id, ids[2])
+            .await
+            .is_err()
+    );
+    assert!(
+        !queries::packages::is_member(&db, package_id, ids[2])
+            .await
+            .unwrap()
+    );
+    let invite = queries::owner_invites::upsert(
+        &db,
+        package_id,
+        ids[1],
+        ids[1],
+        "other-fake-hash",
+        "collaborator",
+        chrono::Utc::now() + chrono::Duration::days(1),
+    )
+    .await
+    .unwrap();
+    queries::owner_invites::accept(&db, invite.id, ids[1])
+        .await
+        .unwrap();
+    assert!(
+        queries::packages::is_owner(&db, package_id, ids[1])
+            .await
+            .unwrap(),
+        "stale collaborator invite must not downgrade an owner"
+    );
 }

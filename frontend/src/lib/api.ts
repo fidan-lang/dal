@@ -71,11 +71,7 @@ export interface PackageOwner {
 }
 
 export type TokenScope =
-  | "publish:new"
-  | "publish:update"
-  | "yank"
-  | "owner"
-  | "user:write";
+  "publish:new" | "publish:update" | "yank" | "owner" | "user:write";
 
 export interface TokenScopeOption {
   value: TokenScope;
@@ -274,9 +270,8 @@ function applyRefreshCookiesToRequestHeaders(
 }
 
 function getSetCookieValues(headers: Headers): string[] {
-  const getSetCookie = (
-    headers as Headers & { getSetCookie?: () => string[] }
-  ).getSetCookie;
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] })
+    .getSetCookie;
   if (typeof getSetCookie === "function") {
     const values = getSetCookie.call(headers);
     if (values.length > 0) return values;

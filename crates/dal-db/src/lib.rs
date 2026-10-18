@@ -7,6 +7,8 @@ pub use sqlx::PgPool;
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(20)
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .idle_timeout(std::time::Duration::from_secs(300))
         .connect(database_url)
         .await?;
     Ok(pool)

@@ -25,7 +25,10 @@ pub struct PackageMetadataUpdate<'a> {
     pub categories: &'a [String],
 }
 
-pub async fn create(pool: &PgPool, new_package: NewPackage<'_>) -> DalResult<Package> {
+pub async fn create(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    new_package: NewPackage<'_>,
+) -> DalResult<Package> {
     let pkg = sqlx::query_as::<_, Package>(
         "INSERT INTO packages
              (id, name, description, repository, homepage, license, keywords, categories)
@@ -45,7 +48,10 @@ pub async fn create(pool: &PgPool, new_package: NewPackage<'_>) -> DalResult<Pac
     Ok(pkg)
 }
 
-pub async fn get_by_name(pool: &PgPool, name: &str) -> DalResult<Option<Package>> {
+pub async fn get_by_name(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    name: &str,
+) -> DalResult<Option<Package>> {
     let pkg = sqlx::query_as::<_, Package>("SELECT * FROM packages WHERE lower(name) = lower($1)")
         .bind(name)
         .fetch_optional(pool)
@@ -79,7 +85,7 @@ pub async fn name_exists(pool: &PgPool, name: &str) -> DalResult<bool> {
 }
 
 pub async fn update_metadata(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     update: PackageMetadataUpdate<'_>,
 ) -> DalResult<Package> {
     let pkg = sqlx::query_as::<_, Package>(
@@ -181,7 +187,7 @@ pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> DalResult<(Vec<Pack
 // ── Ownership ─────────────────────────────────────────────────────────────────
 
 pub async fn add_owner(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     package_id: Uuid,
     user_id: Uuid,
     role: &str,
@@ -201,7 +207,11 @@ pub async fn add_owner(
     Ok(())
 }
 
-pub async fn remove_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
+pub async fn remove_owner(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    user_id: Uuid,
+) -> DalResult<bool> {
     let res = sqlx::query("DELETE FROM package_owners WHERE package_id = $1 AND user_id = $2")
         .bind(package_id)
         .bind(user_id)
@@ -210,7 +220,10 @@ pub async fn remove_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> Dal
     Ok(res.rows_affected() > 0)
 }
 
-pub async fn list_owners(pool: &PgPool, package_id: Uuid) -> DalResult<Vec<PackageOwner>> {
+pub async fn list_owners(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+) -> DalResult<Vec<PackageOwner>> {
     let owners = sqlx::query_as::<_, PackageOwner>(
         "SELECT * FROM package_owners WHERE package_id = $1 ORDER BY created_at ASC",
     )
@@ -220,7 +233,11 @@ pub async fn list_owners(pool: &PgPool, package_id: Uuid) -> DalResult<Vec<Packa
     Ok(owners)
 }
 
-pub async fn is_member(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
+pub async fn is_member(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    user_id: Uuid,
+) -> DalResult<bool> {
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(SELECT 1 FROM package_owners WHERE package_id = $1 AND user_id = $2)",
     )
@@ -231,7 +248,11 @@ pub async fn is_member(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalRes
     Ok(row.0)
 }
 
-pub async fn is_owner(pool: &PgPool, package_id: Uuid, user_id: Uuid) -> DalResult<bool> {
+pub async fn is_owner(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    user_id: Uuid,
+) -> DalResult<bool> {
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(
             SELECT 1
@@ -285,8 +306,21 @@ pub async fn transfer_ownership(
     package_id: Uuid,
     from_user_id: Uuid,
     to_user_id: Uuid,
+    allow_admin: bool,
 ) -> DalResult<()> {
+    if from_user_id == to_user_id {
+        return Err(dal_common::error::DalError::Validation(
+            "cannot transfer ownership to yourself".into(),
+        ));
+    }
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+        .bind(package_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !allow_admin && !is_owner(&mut *tx, package_id, from_user_id).await? {
+        return Err(dal_common::error::DalError::Forbidden);
+    }
 
     // Ensure target is already an owner/collaborator — upsert as owner
     sqlx::query(

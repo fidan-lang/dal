@@ -36,6 +36,9 @@ pub struct PackageMeta {
     pub name: String,
     /// SemVer version string.
     pub version: String,
+    /// Optional compiler SemVer requirement, independent of the package version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidan: Option<String>,
     /// One-line description of the package.
     pub description: Option<String>,
     /// SPDX license identifier (e.g. `MIT`).
@@ -76,6 +79,10 @@ pub struct Lockfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockedPackage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidan: Option<String>,
     pub name: String,
     pub module: String,
     pub version: String,
@@ -158,6 +165,12 @@ impl Manifest {
 
         // Validate version is parseable SemVer
         self.version()?;
+
+        if let Some(requirement) = &self.package.fidan {
+            semver::VersionReq::parse(requirement).map_err(|_| {
+                ManifestError::Validation("invalid package.fidan compiler requirement".into())
+            })?;
+        }
 
         // Validate keywords
         if self.package.keywords.len() > 5 {
@@ -249,6 +262,11 @@ impl Lockfile {
     }
 
     pub fn validate_against_manifest(&self, manifest: &Manifest) -> Result<(), LockError> {
+        if self.packages.len() > 128 {
+            return Err(LockError::Validation(
+                "lockfile exceeds the 128 package resolver limit".into(),
+            ));
+        }
         if self.schema_version != LOCK_SCHEMA_VERSION {
             return Err(LockError::UnsupportedSchemaVersion {
                 found: self.schema_version,
@@ -261,6 +279,22 @@ impl Lockfile {
         let mut by_name = HashMap::new();
 
         for pkg in &self.packages {
+            if pkg.checksum.as_ref().is_some_and(|value| {
+                value.len() != 64 || !value.bytes().all(|v| v.is_ascii_hexdigit())
+            }) {
+                return Err(LockError::Validation(format!(
+                    "invalid checksum for `{}`",
+                    pkg.name
+                )));
+            }
+            if let Some(requirement) = &pkg.fidan {
+                semver::VersionReq::parse(requirement).map_err(|_| {
+                    LockError::Validation(format!(
+                        "invalid compiler requirement for `{}`",
+                        pkg.name
+                    ))
+                })?;
+            }
             validate_package_name(&pkg.name)
                 .map_err(|_| LockError::InvalidPackageName(pkg.name.clone()))?;
             if !seen_names.insert(pkg.name.clone()) {
@@ -290,7 +324,16 @@ impl Lockfile {
             by_name.insert(pkg.name.clone(), pkg);
         }
 
-        for (dep_name, dep_spec) in &manifest.dependencies {
+        for (dep_name, dep_spec) in manifest
+            .dependencies
+            .iter()
+            .chain(&manifest.optional_dependencies)
+        {
+            if (dep_spec.is_optional() || manifest.optional_dependencies.contains_key(dep_name))
+                && !by_name.contains_key(dep_name)
+            {
+                continue;
+            }
             let locked = by_name
                 .get(dep_name)
                 .ok_or_else(|| LockError::MissingDirectDependency(dep_name.clone()))?;
@@ -314,7 +357,10 @@ impl Lockfile {
             }
             let expected_features = normalize_feature_list(dep_spec.features());
             let locked_features = normalize_feature_list(&locked.features);
-            if expected_features != locked_features {
+            if !expected_features
+                .iter()
+                .all(|feature| locked_features.contains(feature))
+            {
                 return Err(LockError::Validation(format!(
                     "direct dependency `{dep_name}` enables features {:?} but lock records {:?}",
                     expected_features, locked_features
@@ -356,7 +402,12 @@ impl Lockfile {
 
         let mut reachable = HashSet::new();
         let mut stack = Vec::new();
-        for dep in manifest.dependencies.keys() {
+        for dep in manifest
+            .dependencies
+            .keys()
+            .chain(manifest.optional_dependencies.keys())
+            .filter(|name| by_name.contains_key(*name))
+        {
             visit_locked(dep, &by_name, &mut reachable, &mut stack)?;
         }
 
@@ -474,6 +525,13 @@ pub enum LockError {
 }
 
 fn validate_dependency_spec(name: &str, spec: &DependencySpec) -> Result<(), ManifestError> {
+    if let DependencySpec::Detailed(detail) = spec
+        && (detail.git.is_some() || detail.rev.is_some())
+    {
+        return Err(ManifestError::Validation(
+            "git dependencies are not supported; use a registry version".into(),
+        ));
+    }
     semver::VersionReq::parse(spec.version_req()).map_err(|_| {
         ManifestError::InvalidVersionReq {
             dep: name.to_string(),
@@ -515,7 +573,12 @@ fn validate_feature_member(
 ) -> Result<(), ManifestError> {
     if let Some(dep_name) = member.strip_prefix("dep:") {
         validate_package_name(dep_name)?;
-        if !manifest.optional_dependencies.contains_key(dep_name) {
+        if !manifest.optional_dependencies.contains_key(dep_name)
+            && !manifest
+                .dependencies
+                .get(dep_name)
+                .is_some_and(DependencySpec::is_optional)
+        {
             return Err(ManifestError::Validation(format!(
                 "invalid feature member `{member}` in feature `{feature}`: unknown optional dependency `{dep_name}`"
             )));
@@ -808,5 +871,82 @@ version = "1.2.3"
             .validate_against_manifest(&manifest)
             .expect_err("feature mismatch should fail");
         assert!(error.to_string().contains("enables features"));
+    }
+}
+
+#[cfg(test)]
+mod compiler_contract_tests {
+    use super::*;
+
+    #[test]
+    fn shared_registry_manifest_preserves_compiler_and_all_metadata() {
+        let source = include_str!("../../../test/fixtures/dal/manifest-v1.toml");
+        let manifest: Manifest = source.parse().unwrap();
+        assert_eq!(manifest.package.fidan.as_deref(), Some(">=1.0.16, <2.0.0"));
+        let roundtrip: Manifest =
+            toml::from_str(&toml::to_string_pretty(&manifest).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&manifest).unwrap(),
+            serde_json::to_value(roundtrip).unwrap()
+        );
+        assert!(
+            source
+                .replace(">=1.0.16, <2.0.0", "invalid requirement")
+                .parse::<Manifest>()
+                .is_err()
+        );
+        let legacy = source
+            .lines()
+            .filter(|line| !line.starts_with("fidan ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(legacy.parse::<Manifest>().unwrap().package.fidan.is_none());
+    }
+}
+
+#[cfg(test)]
+mod lock_contract_tests {
+    use super::*;
+    #[test]
+    fn oversized_untrusted_lock_is_rejected_before_graph_recursion() {
+        let manifest = Manifest::from_toml(include_bytes!(
+            "../../../test/fixtures/dal/manifest-v1.toml"
+        ))
+        .unwrap();
+        let mut lock =
+            Lockfile::from_toml(include_bytes!("../../../test/fixtures/dal/lock-v1.toml")).unwrap();
+        lock.packages = vec![lock.packages[0].clone(); 129];
+        assert!(
+            lock.validate_against_manifest(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("128 package")
+        );
+    }
+
+    #[test]
+    fn shared_lock_fixture_preserves_integrity_and_compiler_metadata() {
+        let manifest = Manifest::from_toml(include_bytes!(
+            "../../../test/fixtures/dal/manifest-v1.toml"
+        ))
+        .unwrap();
+        let lock =
+            Lockfile::from_toml(include_bytes!("../../../test/fixtures/dal/lock-v1.toml")).unwrap();
+        lock.validate_against_manifest(&manifest).unwrap();
+        assert_eq!(
+            lock.packages[0].checksum.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(lock.packages[0].fidan.as_deref(), Some(">=1.0.16, <2.0.0"));
+        let mut malformed = lock.clone();
+        malformed.packages[0].checksum = Some("bad".into());
+        assert!(malformed.validate_against_manifest(&manifest).is_err());
+        malformed = lock.clone();
+        malformed.packages[0].fidan = Some("broken".into());
+        assert!(malformed.validate_against_manifest(&manifest).is_err());
+        // A single locked dependency may unify additional transitive features.
+        malformed = lock;
+        malformed.packages[0].features.push("extra".into());
+        malformed.validate_against_manifest(&manifest).unwrap();
     }
 }

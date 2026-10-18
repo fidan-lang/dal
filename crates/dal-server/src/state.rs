@@ -21,6 +21,8 @@ pub struct AppState {
     pub sqs_url: String,
     pub sqs_client: Arc<aws_sdk_sqs::Client>,
     pub cfg: Arc<Config>,
+    /// Bound simultaneous archive buffers; keep within the provisional 512 MiB container budget.
+    pub publish_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -33,6 +35,13 @@ impl AppState {
 
         // Build one shared AWS SDK config for all AWS clients.
         let aws_cfg = aws_config::defaults(BehaviorVersion::latest())
+            .timeout_config(
+                aws_config::timeout::TimeoutConfig::builder()
+                    .connect_timeout(std::time::Duration::from_secs(5))
+                    .read_timeout(std::time::Duration::from_secs(30))
+                    .operation_timeout(std::time::Duration::from_secs(60))
+                    .build(),
+            )
             .region(Region::new(cfg.aws_region.clone()))
             .load()
             .await;
@@ -86,6 +95,7 @@ impl AppState {
             sqs_url: cfg.sqs_queue_url.clone(),
             sqs_client: Arc::new(sqs_client),
             cfg: Arc::new(cfg.clone()),
+            publish_slots: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 }
