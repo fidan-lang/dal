@@ -323,7 +323,7 @@ try {
     }
   if (mail) await new Promise((resolve) => mail.close(resolve));
   if (composeStarted) {
-    const result = spawnSync("docker", [...compose, "down"], {
+    const result = spawnSync("docker", [...compose, "down", "--volumes"], {
       cwd: root,
       env,
       stdio: "inherit",

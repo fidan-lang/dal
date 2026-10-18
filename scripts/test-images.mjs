@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 // Local OCI smoke gate: dedicated services, fake credentials, no host secret mounts.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+mkdirSync(path.join(root, "target"), { recursive: true });
 const scratch = mkdtempSync(path.join(root, "target", "image-test-"));
 const project = `dal-image-audit-${process.pid}-${randomUUID().slice(0, 8)}`;
 const compose = ["compose", "-p", project, "-f", "docker-compose.test.yml"];
@@ -159,6 +160,6 @@ try {
   );
 } finally {
   for (const name of owned) docker(["rm", "-f", name], [0, 1]);
-  docker([...compose, "down"]);
+  docker([...compose, "down", "--volumes"]);
   rmSync(scratch, { recursive: true, force: true });
 }
