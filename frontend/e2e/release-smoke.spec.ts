@@ -276,7 +276,7 @@ function actualCliLifecycle(token: string, suffix: string) {
     invoke(argsPublisher, ["dal", "publish"]);
     invoke(consumer, ["dal", "add", "args"]);
     const parserProgram =
-      'use args\nuse std.env as env\nvar parsed = args.parse(env.args(), {"name":{"kind":"value"},"verbose":{"kind":"flag"}})\nassert_eq(parsed["error"], "")\nassert_eq(parsed["values"]["name"], "Dal")\nassert_eq(parsed["values"]["verbose"], true)\nprint("args installed parser passed")\n';
+      'use args.{command, run, ArgumentError}\n@command\naction greet with (optional name oftype string = "", optional verbose oftype boolean = false) {\nassert_eq(name, "Dal")\nassert_eq(verbose, true)\nprint("args installed parser passed")\n}\nrun(greet)\nvar caught = false\nattempt { run(greet, argv set ["--invalid"]) } catch error oftype ArgumentError {\nassert_eq(error.message.contains("Unknown option"), true)\ncaught = true\n}\nassert_eq(caught, true)\n';
     writeFileSync(path.join(consumer, "main.fdn"), parserProgram);
     for (const separator of [[], ["--"]]) {
       expect(
