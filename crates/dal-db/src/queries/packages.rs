@@ -114,7 +114,10 @@ pub async fn update_metadata(
     Ok(pkg)
 }
 
-pub async fn increment_downloads(pool: &PgPool, id: Uuid) -> DalResult<()> {
+pub async fn increment_downloads(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> DalResult<()> {
     sqlx::query("UPDATE packages SET downloads = downloads + 1, updated_at = now() WHERE id = $1")
         .bind(id)
         .execute(pool)

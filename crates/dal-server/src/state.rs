@@ -9,6 +9,10 @@ use tracing::info;
 use crate::config::Config;
 use crate::middleware::rate_limit::RateLimiter;
 
+/// Best-effort accounting never waits for admission or retains detached DB tasks.
+pub const ACCOUNTING_CONCURRENCY: usize = 8;
+pub const ACCOUNTING_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Shared application state — cheap to clone (all Arc-backed).
 #[derive(Clone)]
 pub struct AppState {
@@ -23,9 +27,27 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     /// Bound simultaneous archive buffers; keep within the provisional 512 MiB container budget.
     pub publish_slots: Arc<tokio::sync::Semaphore>,
+    pub accounting_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
+    pub async fn best_effort_accounting<T>(
+        &self,
+        operation: impl std::future::Future<Output = Result<T, dal_common::error::DalError>>,
+    ) {
+        let Ok(_permit) = self.accounting_slots.try_acquire() else {
+            return;
+        };
+        // ponytail: at most eight in-flight operations and 250ms per admitted request;
+        // drop telemetry under load instead of adding an unbounded task/queue system.
+        if !matches!(
+            tokio::time::timeout(ACCOUNTING_TIMEOUT, operation).await,
+            Ok(Ok(_))
+        ) {
+            tracing::debug!("best-effort accounting failed or exceeded its budget");
+        }
+    }
+
     pub async fn build(cfg: &Config) -> anyhow::Result<Self> {
         // Database
         let db = dal_db::connect(&cfg.database_url).await?;
@@ -96,6 +118,7 @@ impl AppState {
             sqs_client: Arc::new(sqs_client),
             cfg: Arc::new(cfg.clone()),
             publish_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            accounting_slots: Arc::new(tokio::sync::Semaphore::new(ACCOUNTING_CONCURRENCY)),
         })
     }
 }

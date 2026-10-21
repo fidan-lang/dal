@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Multipart, Path, State},
+    extract::{ConnectInfo, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
 };
@@ -15,6 +15,8 @@ use dal_manifest::{Lockfile, Manifest};
 use dal_storage::ArchiveInfo;
 
 use crate::{extractors::AuthActor, state::AppState};
+
+const MAX_USER_AGENT_BYTES: usize = 512;
 
 const UPLOAD_CAPACITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const UPLOAD_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -59,6 +61,7 @@ async fn get_version(
 async fn download(
     State(state): State<AppState>,
     Path((name, version)): Path<(String, String)>,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
 ) -> Result<axum::response::Redirect, DalError> {
     let pkg = queries::packages::get_by_name(&state.db, &name)
@@ -71,27 +74,30 @@ async fn download(
     // Yank affects resolution, not immutable artifact access for existing locks.
     let url = state.storage.presigned_url(&ver.s3_key, 60).await?;
 
-    // Record download asynchronously
-    let db = state.db.clone();
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
-    let ip_hash = dal_auth::api_token::hash_ip(client_ip);
-    let ver_id = ver.id;
-    let pkg_id = pkg.id;
+    let client_ip = peer.map(|axum::Extension(ConnectInfo(address))| {
+        crate::middleware::rate_limit::extract_client_ip(
+            &headers,
+            address.ip(),
+            &state.cfg.trusted_proxies,
+        )
+        .to_string()
+    });
+    // Without transport peer information, never trust a client-supplied forwarding header.
+    let ip_hash = dal_auth::api_token::hash_ip(client_ip.as_deref().unwrap_or("unknown"));
     let ua = headers
         .get(axum::http::header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned);
-    tokio::spawn(async move {
-        let _ = queries::versions::increment_downloads(&db, ver_id).await;
-        let _ = queries::packages::increment_downloads(&db, pkg_id).await;
-        let _ = queries::versions::record_download(&db, ver_id, &ip_hash, ua.as_deref()).await;
-    });
+        .map(|value| &value[..value.floor_char_boundary(MAX_USER_AGENT_BYTES.min(value.len()))]);
+    state
+        .best_effort_accounting(queries::versions::account_download(
+            &state.db,
+            ver.id,
+            pkg.id,
+            &ip_hash,
+            ua,
+            crate::state::ACCOUNTING_TIMEOUT,
+        ))
+        .await;
 
     Ok(axum::response::Redirect::temporary(&url))
 }

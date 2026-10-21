@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     routing::{get, post},
 };
-use chrono::{Duration, Utc};
+use chrono::{Duration, Timelike, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use url::Url;
@@ -15,7 +15,11 @@ use dal_auth::api_token::hash_token as sha256_hex;
 use dal_common::error::DalError;
 use dal_db::queries;
 
-use crate::{extractors::AuthUser, responses::CurrentUserResponse, state::AppState};
+use crate::{
+    extractors::{AuthUser, VerifiedSession, authenticated_session},
+    responses::CurrentUserResponse,
+    state::AppState,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -270,7 +274,19 @@ async fn login(
         ));
     }
 
+    // Revocation rejects the entire cutoff second because Cognito iat is integral.
+    // Authenticate only after that second has ended; otherwise a successful fresh
+    // login immediately returns a token that our own authorization must reject.
+    if let Some(cutoff) = db_user.session_invalid_before {
+        let next_epoch = cutoff.with_nanosecond(0).unwrap() + Duration::seconds(1);
+        if let Ok(remaining) = (next_epoch - Utc::now()).to_std() {
+            tokio::time::sleep(remaining).await;
+        }
+    }
+
     let (_access, id_token, refresh) = state.cognito.sign_in(&username, &body.password).await?;
+    // A concurrent revocation must never receive a success-shaped cookie response.
+    let db_user = authenticated_session(&state, &id_token).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -312,9 +328,12 @@ async fn login(
 
 async fn logout(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    VerifiedSession(user): VerifiedSession,
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
-    let _ = state.cognito.admin_sign_out(&user.username).await;
+    revoke_global_session(&state.cognito, &user.username).await?;
+    // Include tokens issued while the provider request was in flight. The
+    // cutoff is monotonic; whole-second iat equality deliberately fails closed.
+    queries::users::advance_session_invalid_before(&state.db, user.id, Utc::now()).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -348,6 +367,15 @@ async fn logout(
     Ok((headers, Json(json!({ "message": "logged out" }))))
 }
 
+/// A successful logout means Cognito has invalidated the user's refresh tokens.
+/// Do not clear browser cookies and report success when that provider operation fails.
+async fn revoke_global_session(
+    cognito: &dal_auth::CognitoClient,
+    username: &str,
+) -> Result<(), DalError> {
+    cognito.admin_sign_out(username).await
+}
+
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -362,6 +390,7 @@ async fn refresh(
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
     let refresh_token = resolve_refresh_token(&headers, &body)?;
     let (_access, id) = state.cognito.refresh(&refresh_token).await?;
+    authenticated_session(&state, &id).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -506,6 +535,7 @@ async fn reset_password(
         .cognito
         .admin_set_password(&user.username, &body.new_password)
         .await?;
+    queries::users::advance_session_invalid_before(&mut *transaction, user.id, Utc::now()).await?;
 
     transaction.commit().await?;
     Ok(Json(
@@ -590,4 +620,71 @@ async fn enqueue_email(state: &AppState, payload: serde_json::Value) -> Result<(
         state.cfg.aws_region,
         last_err.unwrap_or_else(|| "unknown error".to_string())
     )))
+}
+
+#[cfg(test)]
+mod logout_tests {
+    use super::*;
+    use aws_config::{BehaviorVersion, Region};
+    use aws_sdk_sqs::config::Credentials;
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode},
+    };
+    use serde_json::json;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[tokio::test]
+    async fn logout_propagates_a_real_cognito_global_sign_out_failure() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = requests.clone();
+        let provider = Router::new().fallback(move |headers: HeaderMap| {
+            let observed = observed.clone();
+            async move {
+                assert_eq!(
+                    headers
+                        .get("x-amz-target")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|target| target.rsplit('.').next()),
+                    Some("AdminUserGlobalSignOut")
+                );
+                observed.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "__type": "ServiceUnavailableException",
+                        "message": "fixture provider outage"
+                    })),
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let provider_task = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+
+        let aws = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("eu-central-1"))
+            .credentials_provider(Credentials::new("test", "test", None, None, "local-test"))
+            .retry_config(aws_config::retry::RetryConfig::disabled())
+            .load()
+            .await;
+        let cognito = dal_auth::CognitoClient::from_sdk_config(
+            &aws,
+            "local_logout_pool".into(),
+            "local_logout_client".into(),
+            Some(&endpoint),
+        );
+
+        let error = revoke_global_session(&cognito, "logout-fixture")
+            .await
+            .expect_err("a failed global sign-out must not be reported as logout success");
+        assert!(matches!(error, DalError::Cognito(_)));
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        provider_task.abort();
+    }
 }

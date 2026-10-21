@@ -117,6 +117,29 @@ pub async fn set_email_verified(
     Ok(())
 }
 
+/// Advance the JWT revocation cutoff without allowing an older request to move
+/// it backwards.
+pub async fn advance_session_invalid_before(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    invalid_before: chrono::DateTime<chrono::Utc>,
+) -> DalResult<()> {
+    sqlx::query(
+        "UPDATE users
+         SET session_invalid_before = CASE
+                 WHEN session_invalid_before IS NULL OR session_invalid_before < $2 THEN $2
+                 ELSE session_invalid_before
+             END,
+             updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .bind(invalid_before)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn delete_unverified(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     user_id: Uuid,

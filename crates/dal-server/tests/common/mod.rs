@@ -119,6 +119,7 @@ fn isolation_rejects_remote_service_endpoints() {
 // ── TestApp ───────────────────────────────────────────────────────────────────
 
 pub struct TestApp {
+    cognito: std::sync::Arc<dal_auth::CognitoClient>,
     pub publish_slots: std::sync::Arc<tokio::sync::Semaphore>,
     router: axum::Router,
 }
@@ -132,14 +133,71 @@ impl TestApp {
     }
 
     pub async fn with_config(cfg: Config) -> Self {
+        Self::with_cognito_control_endpoint(cfg, None).await
+    }
+
+    /// Override only Cognito's control API for fault injection, keeping the real
+    /// local issuer/JWKS identity intact for signed session validation.
+    pub async fn with_cognito_control_endpoint(cfg: Config, endpoint: Option<&str>) -> Self {
         assert_isolated_config(&cfg);
-        let state = AppState::build(&cfg).await.unwrap_or_else(|e| {
+        let mut state = AppState::build(&cfg).await.unwrap_or_else(|e| {
             panic!("TestApp::spawn failed — is docker-compose.test.yml running?\n\nError: {e:#}")
         });
+        if let Some(endpoint) = endpoint {
+            let mut checked = cfg.clone();
+            checked.cognito_endpoint_url = Some(endpoint.to_owned());
+            assert_isolated_config(&checked);
+            let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .region(aws_config::Region::new(cfg.aws_region.clone()))
+                .credentials_provider(aws_sdk_sqs::config::Credentials::new(
+                    "test",
+                    "test",
+                    None,
+                    None,
+                    "local-test",
+                ))
+                .retry_config(aws_config::retry::RetryConfig::disabled())
+                .load()
+                .await;
+            state.cognito = std::sync::Arc::new(dal_auth::CognitoClient::from_sdk_config(
+                &sdk,
+                cfg.cognito_user_pool_id.clone(),
+                cfg.cognito_client_id.clone(),
+                Some(endpoint),
+            ));
+        }
         TestApp {
+            cognito: state.cognito.clone(),
             publish_slots: state.publish_slots.clone(),
             router: build_router(state),
         }
+    }
+
+    /// Real signed JWT fixture for an existing database user, never a scope-erasing API token.
+    pub async fn interactive_token(&self, db: &sqlx::PgPool, id: uuid::Uuid) -> String {
+        let user = dal_db::queries::users::get_by_id(db, id)
+            .await
+            .unwrap()
+            .unwrap();
+        let password = "LocalFixturePass123!";
+        let sub = self
+            .cognito
+            .admin_create_user(&user.username, password, &user.email)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET cognito_sub=$1 WHERE id=$2")
+            .bind(sub)
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+        let (_, jwt, _) = self
+            .cognito
+            .sign_in(&user.username, password)
+            .await
+            .unwrap();
+        assert!(!jwt.is_empty());
+        jwt
     }
 
     // ── Request helpers ───────────────────────────────────────────────────────

@@ -26,6 +26,9 @@ pub struct Claims {
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
+    /// Original authentication epoch, retained across refreshes by Cognito.
+    #[serde(default)]
+    pub auth_time: Option<i64>,
     pub token_use: Option<String>,
 }
 
@@ -192,6 +195,7 @@ mod tests {
             iss: "issuer".into(),
             exp: 100,
             iat: 1,
+            auth_time: Some(1),
             token_use: Some("id".into()),
         };
         assert!(validate_claims(&claims, "issuer", "client").is_ok());

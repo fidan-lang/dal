@@ -102,7 +102,11 @@ fn is_rate_limited_auth_path(path: &str) -> bool {
     )
 }
 
-fn extract_client_ip(headers: &HeaderMap, peer: IpAddr, trusted_proxies: &[IpAddr]) -> IpAddr {
+pub(crate) fn extract_client_ip(
+    headers: &HeaderMap,
+    peer: IpAddr,
+    trusted_proxies: &[IpAddr],
+) -> IpAddr {
     // The reverse proxy must overwrite this single-address header, not append a chain.
     if trusted_proxies.contains(&peer)
         && let Some(ip) = headers

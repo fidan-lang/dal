@@ -295,16 +295,11 @@ async fn owner_invites_are_pending_until_accepted() {
         &[OWNER_SCOPE.to_string()],
     )
     .await;
-    let invitee_token = seed_member_token(
-        &db,
-        invitee_id,
-        "invitee-dashboard-token",
-        &DEFAULT_API_TOKEN_SCOPES
-            .iter()
-            .map(|scope| scope.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .await;
+    // Accepting an invitation is interactive account administration, not API-token scope.
+    queries::users::set_email_verified(&db, invitee_id)
+        .await
+        .unwrap();
+    let invitee_token = app.interactive_token(&db, invitee_id).await;
 
     let invite_res = app
         .request_json(

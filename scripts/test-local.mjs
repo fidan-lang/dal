@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 // Disposable local-only readiness gate. No .env files or cloud credentials are trusted.
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -12,7 +12,7 @@ import {
   rmSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { localTestEndpoint } from "../frontend/e2e/local-test-endpoints.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const flags = new Set(process.argv.slice(2));
@@ -83,6 +83,20 @@ const env = {
   PORT: "9230",
   COGNITO_LOCAL_HOST: "127.0.0.1",
 };
+// Ephemeral signing material for real valid/expired JWT verification tests only.
+// Never read a production private key or persist fixture signing material.
+if (auth) {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const jwk = publicKey.export({ format: "jwk" });
+  env.TEST_JWT_PRIVATE_KEY = privateKey.export({
+    type: "pkcs8",
+    format: "pem",
+  });
+  env.TEST_JWT_JWK_N = jwk.n;
+  env.TEST_JWT_JWK_E = jwk.e;
+}
 for (const name of ["DAL_WEB_BASE_URL"]) delete env[name];
 for (const [key, value] of Object.entries(env))
   if (
@@ -283,7 +297,15 @@ try {
       "../fidan/target/debug",
       `fidan${suffix}`,
     );
-    env.DAL_ARGS_PACKAGE = path.resolve(root, "../args");
+    // Published 1.0.16 lacks the callback API. The checked-in args manifest blocks
+    // release; only a capability-probed local compiler gets a fixture-only copy.
+    const { stageLocalPackage } = await import(
+      pathToFileURL(path.resolve(root, "../args/tests/stage-local.mjs"))
+    );
+    env.DAL_ARGS_PACKAGE = stageLocalPackage(
+      path.join(scratch, "args-staged"),
+      env.DAL_FIDAN_BIN,
+    );
     const api = start(
       path.join(root, "target/debug", `dal-server${suffix}`),
       [],

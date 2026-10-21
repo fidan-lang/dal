@@ -14,7 +14,7 @@ use dal_common::error::DalError;
 use dal_db::{models::OwnershipInvite, queries};
 
 use crate::{
-    extractors::{AuthActor, AuthUser},
+    extractors::{AuthActor, VerifiedSession},
     state::AppState,
 };
 
@@ -147,7 +147,7 @@ async fn invite_owner(
 
 async fn list_pending_invites(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    VerifiedSession(user): VerifiedSession,
 ) -> Result<Json<Value>, DalError> {
     let invites = queries::owner_invites::list_pending_for_user(&state.db, user.id).await?;
     let mut enriched = Vec::with_capacity(invites.len());
@@ -161,7 +161,7 @@ async fn list_pending_invites(
 
 async fn accept_invite(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
     let pending = queries::owner_invites::get_pending_for_user(&state.db, id, user.id)
@@ -192,7 +192,7 @@ async fn accept_invite(
 
 async fn decline_invite(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
     let pending = queries::owner_invites::get_pending_for_user(&state.db, id, user.id)
