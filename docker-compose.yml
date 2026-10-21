@@ -25,7 +25,7 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: dal
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -48,7 +48,7 @@ services:
       # Persist across restarts
       PERSISTENCE: 1
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     volumes:
       - localstack_data:/var/lib/localstack
       # Seed script: creates the bucket + FIFO queue on startup
@@ -81,7 +81,7 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   # ── Dal worker ──────────────────────────────────────────────────────────────
   dal-worker:

@@ -58,6 +58,65 @@ async fn fixture(state: &AppState) -> (Uuid, Uuid, String) {
 }
 
 #[tokio::test]
+async fn public_download_preserves_signed_access_without_caching_the_capability() {
+    let state = AppState::build(&common::test_config()).await.unwrap();
+    let (_, version, uri) = fixture(&state).await;
+    let key = format!("test/download-contract/{version}.tar.gz");
+    let payload = b"public package download fixture";
+    state
+        .storage
+        .upload(&key, payload.to_vec(), "application/gzip")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE package_versions SET s3_key=$2 WHERE id=$1")
+        .bind(version)
+        .bind(&key)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    // No bearer token, cookie or Origin is required for public package access.
+    let response = build_router(state.clone())
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 307);
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .expect("signed redirects must be uncacheable"),
+        "private, no-store"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("referrer-policy")
+            .expect("signed redirects must suppress referrers"),
+        "no-referrer"
+    );
+    let signed = reqwest::Url::parse(
+        response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let query = signed
+        .query_pairs()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(query.get("X-Amz-Expires").map(|v| v.as_ref()), Some("60"));
+    assert!(query.contains_key("X-Amz-Signature"));
+    assert!(signed.path().ends_with(&key));
+    assert_eq!(signed.host_str(), Some("127.0.0.1"));
+    let archive = reqwest::get(signed).await.unwrap();
+    assert!(archive.status().is_success());
+    assert_eq!(archive.bytes().await.unwrap().as_ref(), payload);
+    state.storage.delete(&key).await.unwrap();
+}
+
+#[tokio::test]
 async fn download_telemetry_ignores_spoofed_forwarding_and_caps_user_agent() {
     let state = AppState::build(&common::test_config()).await.unwrap();
     let (_, version, uri) = fixture(&state).await;

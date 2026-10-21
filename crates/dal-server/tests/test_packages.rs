@@ -60,6 +60,17 @@ async fn list_packages_respects_per_page_param() {
     assert!(items.len() <= 5, "response must not exceed per_page={}", 5);
 }
 
+#[tokio::test]
+async fn public_catalog_handles_the_maximum_page_without_overflow() {
+    let app = common::TestApp::spawn().await;
+    let (status, body) =
+        common::TestApp::unpack(app.get("/packages?page=4294967295&per_page=100").await).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["page"], u32::MAX);
+    assert_eq!(body["per_page"], 100);
+    assert!(body["items"].as_array().unwrap().is_empty());
+}
+
 // ── Package lookup ────────────────────────────────────────────────────────────
 
 /// GET /packages/:name for a non-existent name → 404.

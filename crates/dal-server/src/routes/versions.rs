@@ -1,7 +1,8 @@
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Multipart, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
     routing::{get, post, put},
 };
 use serde::Deserialize;
@@ -17,6 +18,7 @@ use dal_storage::ArchiveInfo;
 use crate::{extractors::AuthActor, state::AppState};
 
 const MAX_USER_AGENT_BYTES: usize = 512;
+const DOWNLOAD_URL_TTL_SECONDS: u64 = 60;
 
 const UPLOAD_CAPACITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const UPLOAD_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -63,7 +65,7 @@ async fn download(
     Path((name, version)): Path<(String, String)>,
     peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-) -> Result<axum::response::Redirect, DalError> {
+) -> Result<axum::response::Response, DalError> {
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
@@ -72,7 +74,10 @@ async fn download(
         .ok_or_else(|| DalError::VersionNotFound(version.clone(), name.clone()))?;
 
     // Yank affects resolution, not immutable artifact access for existing locks.
-    let url = state.storage.presigned_url(&ver.s3_key, 60).await?;
+    let url = state
+        .storage
+        .presigned_url(&ver.s3_key, DOWNLOAD_URL_TTL_SECONDS)
+        .await?;
 
     let client_ip = peer.map(|axum::Extension(ConnectInfo(address))| {
         crate::middleware::rate_limit::extract_client_ip(
@@ -99,7 +104,16 @@ async fn download(
         ))
         .await;
 
-    Ok(axum::response::Redirect::temporary(&url))
+    // A signed location is a temporary capability; shared caches must not retain
+    // it or hand an expired URL to a later client.
+    Ok((
+        [
+            (header::CACHE_CONTROL, "private, no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        axum::response::Redirect::temporary(&url),
+    )
+        .into_response())
 }
 
 /// Publish a new package version.

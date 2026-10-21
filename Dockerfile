@@ -11,8 +11,10 @@ COPY migrations ./migrations
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/app/target \
     cargo build --release --locked -p dal-server -p dal-worker && \
     install -D -m 0755 target/release/dal-server /out/dal-server && \
+    install -D -m 0755 target/release/dal-healthcheck /out/dal-healthcheck && \
     install -D -m 0755 target/release/dal-worker /out/dal-worker
 FROM ${RUNTIME_IMAGE} AS runtime
+COPY LICENSE NOTICE /usr/share/doc/dal/
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Both Rust executables use Rustls/AWS-LC; ldd confirms no OpenSSL runtime dependency.
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* && \
@@ -20,12 +22,10 @@ RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* && \
 USER dal:dal
 WORKDIR /tmp
 FROM runtime AS server
-USER root
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-USER dal:dal
 COPY --from=builder /out/dal-server /usr/local/bin/dal-server
+COPY --from=builder /out/dal-healthcheck /usr/local/bin/dal-healthcheck
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["curl", "--fail", "--silent", "--max-time", "3", "http://127.0.0.1:8080/health"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["/usr/local/bin/dal-healthcheck"]
 ENTRYPOINT ["/usr/local/bin/dal-server"]
 FROM runtime AS worker
 COPY --from=builder /out/dal-worker /usr/local/bin/dal-worker

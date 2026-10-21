@@ -1,8 +1,9 @@
 [package]
 name = "dal-server"
+default-run = "dal-server"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 authors.workspace = true
 
 [lib]

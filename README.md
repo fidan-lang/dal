@@ -8,7 +8,7 @@
 
 **The official package registry for the [Fidan](https://github.com/fidan-lang/fidan) programming language.**
 
-[![License](https://img.shields.io/badge/license-Apache%202.0%20(Modified)-blue.svg)](LICENSE) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE) &nbsp; ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)
 
 [Overview](#overview) • [Architecture](#architecture) • [Getting Started](#getting-started) • [API Reference](#api-reference) • [Contributing](#contributing)
 
@@ -260,6 +260,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and pu
 
 ## License
 
-Licensed under a modified version of the [Apache License 2.0](LICENSE).
+DAL is licensed under the standard [Apache License 2.0](LICENSE), with attribution
+in [NOTICE](NOTICE). Commercial use, modification, redistribution, and hosting
+are permitted, including independent and competing commercial registries.
+
+The official public DAL registry is intended to be free to use for package
+installation, publishing, dependency resolution, caching, and legitimate CI/CD.
+Package authors retain their rights; each package's own license governs reuse
+and redistribution.
+
+See [TRADEMARKS.md](TRADEMARKS.md) for separate branding guidance and
+[REGISTRY_TERMS.md](REGISTRY_TERMS.md) for the official hosted service's draft
+acceptable-use terms, which require legal review before publication/enforcement.
+Implemented protections and unapplied operator steps are documented in
+[Registry security](docs/REGISTRY_SECURITY.md).
 
 Copyright © 2026 Kaan Gönüldinc (AppSolves)

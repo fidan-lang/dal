@@ -1,5 +1,7 @@
 use anyhow::Context;
 
+pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8080";
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
@@ -36,7 +38,7 @@ impl Config {
                 .map(str::parse)
                 .collect::<Result<_, _>>()
                 .context("invalid DAL_TRUSTED_PROXIES IP")?,
-            listen_addr: env_or("DAL_LISTEN_ADDR", "0.0.0.0:8080"),
+            listen_addr: env_or("DAL_LISTEN_ADDR", DEFAULT_LISTEN_ADDR),
             base_url: env_or("DAL_BASE_URL", "http://localhost:8080"),
             storage_bucket: env_with_fallback("DAL_STORAGE_BUCKET", "DAL_S3_BUCKET")?,
             storage_endpoint_url: env_optional_with_fallback(

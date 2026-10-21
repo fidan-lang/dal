@@ -618,3 +618,31 @@ for (const width of [390, 768, 1440, 1920]) {
     expect(errors).toEqual([]);
   });
 }
+
+test("footer links software, branding and draft service policies separately", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  const legal = page.getByRole("navigation", { name: "Legal", exact: true });
+  for (const [name, url] of [
+    ["Apache 2.0", "/LICENSE.txt"],
+    ["Attribution", "/NOTICE.txt"],
+    ["Trademarks", "https://github.com/fidan-lang/dal/blob/main/TRADEMARKS.md"],
+    [
+      "Registry terms (draft)",
+      "https://github.com/fidan-lang/dal/blob/main/REGISTRY_TERMS.md",
+    ],
+  ]) {
+    const link = legal.getByRole("link", { name, exact: true });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", url);
+  }
+  for (const name of ["LICENSE", "NOTICE"]) {
+    const response = await request.get(`/${name}.txt`);
+    expect(response.status()).toBe(200);
+    expect(await response.body()).toEqual(
+      readFileSync(path.resolve(__dirname, "../..", name)),
+    );
+  }
+});

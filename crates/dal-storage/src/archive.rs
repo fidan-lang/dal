@@ -408,6 +408,8 @@ fn is_allowed_top_level_file(name: &str) -> bool {
         || lower == "changelog.md"
         || lower == "license"
         || lower.starts_with("license.")
+        || lower == "notice"
+        || lower.starts_with("notice.")
 }
 
 #[cfg(test)]
@@ -467,6 +469,40 @@ mod tests {
         let crc = bytes.len() - 8;
         bytes[crc] ^= 1;
         assert!(validate_archive(&bytes, 1024 * 1024).is_err());
+    }
+
+    #[test]
+    fn accepts_legal_attribution_files_without_weakening_archive_paths() {
+        for name in [
+            "NOTICE",
+            "NOTICE.txt",
+            "NOTICE.md",
+            "notice",
+            "notice.txt",
+            "license.txt",
+        ] {
+            let notice = format!("demo-0.1.0/{name}");
+            let bytes = archive_bytes(vec![
+                (
+                    "demo-0.1.0/dal.toml",
+                    EntryType::Regular,
+                    b"[package]\nname='demo'\nversion='0.1.0'\n",
+                ),
+                (
+                    "demo-0.1.0/src/init.fdn",
+                    EntryType::Regular,
+                    b"action main {}",
+                ),
+                (&notice, EntryType::Regular, b"Original legal attribution"),
+            ]);
+            let info =
+                validate_archive(&bytes, 1024 * 1024).expect("legal notice must be accepted");
+            assert!(info.files.contains(name));
+            assert_eq!(
+                extract_file(&bytes, "demo-0.1.0", name).unwrap().unwrap(),
+                b"Original legal attribution"
+            );
+        }
     }
 
     #[test]
