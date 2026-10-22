@@ -146,17 +146,27 @@ jobs:
             ./dal/target/audit-tools/gitleaks dir "dal/target/scan-source/$repo" --redact --no-banner --report-format json --report-path "dal/target/source-security/$repo.secrets.json"
           done
           cargo install cargo-audit --version 0.22.0 --locked
-          set +e
-          (cd fidan && cargo audit --json) > dal/target/source-security/fidan.rust.json
-          fidan_status=$?
-          (cd dal && cargo audit --json) > dal/target/source-security/dal.rust.json
-          dal_status=$?
+          # Finding exits (1) are retained for review; tool/network/schema failures fail closed.
+          collect_audit() {
+            dir="$1"; report="$2"; kind="$3"; shift 3
+            set +e
+            (cd "$dir" && "$@") > "$report"
+            code=$?
+            set -e
+            if [ "$code" -gt 1 ]; then echo "Audit tool failed: $dir exit=$code" >&2; return "$code"; fi
+            if [ "$kind" = rust ]; then
+              jq -e '.vulnerabilities | (.found | type == "boolean") and (.count | type == "number")' "$report" > /dev/null
+            else
+              jq -e '.metadata.vulnerabilities.total | type == "number"' "$report" > /dev/null
+            fi
+            printf '%s audit exit=%s (findings require separate security review)\n' "$dir" "$code"
+          }
+          collect_audit fidan dal/target/source-security/fidan.rust.json rust cargo audit --json
+          collect_audit dal dal/target/source-security/dal.rust.json rust cargo audit --json
           for repo in fidan.dev dal/frontend fidan-editors/vscode; do
-            (cd "$repo" && npm audit --json) > "dal/target/source-security/$(echo "$repo" | tr / -).npm.json"
-            printf '%s audit exit=%s\n' "$repo" "$?"
+            collect_audit "$repo" "dal/target/source-security/$(echo "$repo" | tr / -).npm.json" npm npm audit --json
           done
-          printf 'fidan cargo audit exit=%s; dal cargo audit exit=%s (triage raw reports; no suppression)\n' "$fidan_status" "$dal_status"
-          set -e
+
       - name: Upload SBOMs and unfiltered security reports (no image archives)
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
