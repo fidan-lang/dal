@@ -85,7 +85,7 @@ jobs:
           node-version: 24
       - name: Linux compiler and browser dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config xvfb
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config xvfb jq
       - name: Install browser used by the actual candidate lockfiles
         shell: pwsh
         run: |
@@ -145,6 +145,7 @@ jobs:
             git -C "$repo" archive HEAD | tar -x -C "dal/target/scan-source/$repo"
             ./dal/target/audit-tools/gitleaks dir "dal/target/scan-source/$repo" --redact --no-banner --report-format json --report-path "dal/target/source-security/$repo.secrets.json"
           done
+          python3 dal/scripts/test-audit-collector.py
           cargo install cargo-audit --version 0.22.0 --locked
           # Finding exits (1) are retained for review; tool/network/schema failures fail closed.
           collect_audit() {
