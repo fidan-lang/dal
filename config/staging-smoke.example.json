@@ -1,0 +1,14 @@
+{
+  "environment": "staging",
+  "production": false,
+  "api": "https://staging.example.test",
+  "aws_profile": "REPLACE_WITH_ISOLATED_STAGING_PROFILE",
+  "region": "eu-central-1",
+  "bucket": "REPLACE_WITH_EXISTING_APPROVED_STAGING_BUCKET",
+  "r2_endpoint": "https://REPLACE.r2.cloudflarestorage.com",
+  "queue_isolation": "dedicated_no_worker",
+  "queue_url": "https://sqs.eu-central-1.amazonaws.com/REPLACE/dal-audit-staging-REPLACE.fifo",
+  "expected_aws_account": "REPLACE_WITH_STAGING_ACCOUNT",
+  "mail_from": "REPLACE_WITH_VERIFIED_STAGING_SENDER",
+  "mail_to": "REPLACE_WITH_OWNER_CONTROLLED_RECIPIENT"
+}
