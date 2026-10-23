@@ -293,9 +293,8 @@ try {
     );
     const suffix = process.platform === "win32" ? ".exe" : "";
     env.DAL_FIDAN_BIN = path.resolve(
-      root,
-      "../fidan/target/debug",
-      `fidan${suffix}`,
+      process.env.FIDAN_BIN ??
+        path.join(root, "../fidan/target/debug", `fidan${suffix}`),
     );
     // Published 1.0.16 lacks the callback API. The checked-in args manifest blocks
     // release; only a capability-probed local compiler gets a fixture-only copy.

@@ -141,6 +141,15 @@ function actualCliLifecycle(token: string, suffix: string) {
     throw new Error(
       "DAL_FIDAN_BIN must point to the locally built Fidan executable for release E2E",
     );
+  const argsSource = process.env.DAL_ARGS_PACKAGE;
+  if (!argsSource)
+    throw new Error("DAL_ARGS_PACKAGE must identify the local args candidate");
+  // The staged package was capability-probed against this exact compiler.
+  // Stable-only semver ranges deliberately do not opt in to an unpublished RC.
+  const requirement = /^fidan\s*=\s*"([^"\n]+)"/m.exec(
+    readFileSync(path.join(argsSource, "dal.toml"), "utf8"),
+  )?.[1];
+  expect(requirement).toMatch(/^=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   const scratch = mkdtempSync(path.join(tmpdir(), "dal-cli-lifecycle-"));
   const project = path.join(scratch, "publisher");
   const consumer = path.join(scratch, "consumer");
@@ -177,7 +186,7 @@ function actualCliLifecycle(token: string, suffix: string) {
     mkdirSync(consumer);
     writeFileSync(
       path.join(project, "dal.toml"),
-      `[package]\nname="${name}"\nversion="0.1.0"\nfidan=">=1.0.16, <2"\n`,
+      `[package]\nname="${name}"\nversion="0.1.0"\nfidan="${requirement}"\n`,
     );
     writeFileSync(
       path.join(project, "src/init.fdn"),
@@ -254,14 +263,16 @@ function actualCliLifecycle(token: string, suffix: string) {
     expect(readFileSync(path.join(consumer, "dal.toml"), "utf8")).not.toContain(
       name,
     );
-    const argsSource = process.env.DAL_ARGS_PACKAGE;
-    if (!argsSource)
-      throw new Error(
-        "DAL_ARGS_PACKAGE must identify the local args candidate",
-      );
     const argsPublisher = path.join(scratch, "args-publisher");
     mkdirSync(argsPublisher);
-    for (const item of ["dal.toml", "src", "README.md", "LICENSE"]) {
+    for (const item of [
+      "dal.toml",
+      "src",
+      "README.md",
+      "LICENSE",
+      "NOTICE",
+      "assets",
+    ]) {
       cpSync(path.join(argsSource, item), path.join(argsPublisher, item), {
         recursive: true,
       });
@@ -336,6 +347,67 @@ function actualCliLifecycle(token: string, suffix: string) {
           encoding: "utf8",
         }).trim(),
       ).toBe("args installed parser passed");
+    }
+    // The installed package must compose multi-command groups, not just greet.
+    const groupedProgram = `use args.{App, ArgumentError}
+action deploy with (certain environment oftype string) returns string {
+    return "Deploy " + environment
+}
+var operations = App()
+operations.add("deploy", deploy)
+var application = App("consumer", "1.0")
+application.group("ops", operations, aliases = ["operations"])
+assert_eq(application.run(["operations", "deploy", "--environment", "prod"]), "Deploy prod")
+assert_eq(application.complete(["ops", "d"]), ["deploy"])
+var caught = false
+attempt { application.run(["ops", "missing"]) } catch error oftype ArgumentError {
+    caught = error.message.contains("Unknown command")
+}
+assert_eq(caught, true)
+print("args installed groups passed")
+`;
+    writeFileSync(path.join(consumer, "groups.fdn"), groupedProgram);
+    for (const threshold of ["0", "1"]) {
+      expect(
+        invoke(consumer, [
+          "run",
+          "--jit-threshold",
+          threshold,
+          "groups.fdn",
+        ]).stdout.trim(),
+      ).toBe("args installed groups passed");
+    }
+    for (const backend of [
+      "cranelift",
+      ...(process.env.DAL_AUDIT_LLVM_HOME ? ["llvm"] : []),
+    ]) {
+      const binary = path.join(
+        scratch,
+        `args-groups-${backend}${process.platform === "win32" ? ".exe" : ""}`,
+      );
+      invoke(
+        consumer,
+        [
+          "build",
+          "--backend",
+          backend,
+          ...(backend === "llvm" ? ["--lto", "full"] : []),
+          "groups.fdn",
+          "-o",
+          binary,
+        ],
+        true,
+        backend === "llvm"
+          ? { FIDAN_HOME: process.env.DAL_AUDIT_LLVM_HOME }
+          : {},
+      );
+      expect(
+        execFileSync(binary, [], {
+          cwd: consumer,
+          env,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("args installed groups passed");
     }
     // Exercise local CLI entry installation without changing the user's persistent PATH.
     const cliPublisher = path.join(scratch, "entry-publisher");
