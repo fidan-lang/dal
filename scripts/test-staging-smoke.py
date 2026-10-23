@@ -4,6 +4,7 @@ import sys
 sys.dont_write_bytecode = True
 import unittest
 import threading
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
@@ -34,6 +35,51 @@ class StagingTests(unittest.TestCase):
             with patch.object(staging,"command") as command:
                 with self.assertRaises(ValueError): staging.database({})
                 command.assert_not_called()
+
+    def test_unconfirmed_source_is_rejected_before_any_subprocess(self):
+        with patch.dict(staging.os.environ, {
+            "DAL_STAGING_DATABASE_URL": "postgres://fixture@production.example.test/customer_data",
+            "DAL_STAGING_RESTORE_URL": "postgres://fixture@isolated.example.test/dal_audit_restore_fixture",
+        }, clear=True), patch.object(staging, "command") as command:
+            with self.assertRaises(ValueError):
+                staging.database({"production": False})
+            command.assert_not_called()
+
+    def test_separate_database_identity_confirmations(self):
+        environment = {
+            "DAL_STAGING_DATABASE_URL": "postgres://fixture:secret@isolated.example.test/source",
+            "DAL_STAGING_RESTORE_URL": "postgres://fixture:secret@isolated.example.test/dal_audit_restore_fixture",
+            "DAL_CONFIRMED_STAGING_SOURCE": "postgresql://isolated.example.test:5432/source",
+            "DAL_CONFIRMED_STAGING_TARGET": "postgresql://isolated.example.test:5432/dal_audit_restore_fixture",
+            "PGHOSTADDR": "203.0.113.7",
+            "PGSERVICE": "production",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(staging.os.environ, environment, clear=True), patch.object(staging, "ROOT", Path(directory)):
+                def execute(arguments, env=None):
+                    if arguments[0] == "pg_dump":
+                        Path(arguments[-1]).write_bytes(b"isolated fixture")
+                    if arguments[0] == "psql":
+                        return "0" if "information_schema" in arguments[-1] else "3"
+                    return ""
+                with patch.object(staging, "command", side_effect=execute) as command:
+                    staging.database({})
+                    for call in command.call_args_list:
+                        self.assertNotIn("PGHOSTADDR", call.args[1])
+                        self.assertNotIn("PGSERVICE", call.args[1])
+                    self.assertEqual([call.args[0][0] for call in command.call_args_list],
+                                     ["psql", "psql", "pg_dump", "pg_restore", "psql"])
+                for key, value in [
+                    ("DAL_CONFIRMED_STAGING_SOURCE", "postgresql://other.example.test:5432/source"),
+                    ("DAL_CONFIRMED_STAGING_TARGET", "postgresql://isolated.example.test:5432/other"),
+                    ("DAL_STAGING_DATABASE_URL", environment["DAL_STAGING_DATABASE_URL"] + "?host=production.example.test"),
+                    ("DAL_STAGING_DATABASE_URL", environment["DAL_STAGING_DATABASE_URL"] + "?service=production"),
+                    ("DAL_STAGING_DATABASE_URL", "postgres://fixture@isolated.example.test:5432/dal_audit_restore_fixture"),
+                ]:
+                    with self.subTest(key=key, value=value), patch.dict(staging.os.environ, {key: value}), patch.object(staging, "command") as command:
+                        with self.assertRaises(ValueError):
+                            staging.database({})
+                        command.assert_not_called()
 
     def test_redirect_does_not_forward_authorization(self):
         seen = []

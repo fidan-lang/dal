@@ -68,15 +68,40 @@ def aws(config):
     return ["aws", "--profile", profile, "--region", config["region"]], env
 
 
+def database_identity(url):
+    """Credential-free identity; reject libpq routing overrides before tool execution."""
+    parsed = urllib.parse.urlsplit(url)
+    allowed_parameters = {"sslmode", "sslrootcert", "sslcert", "sslkey", "connect_timeout", "application_name"}
+    parameters = urllib.parse.parse_qsl(parsed.query, strict_parsing=True)
+    if (parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname
+            or parsed.fragment or "," in parsed.hostname
+            or any(key not in allowed_parameters for key, _ in parameters)):
+        raise ValueError("A single-host PostgreSQL URL without routing overrides is required")
+    host = parsed.hostname.rstrip(".").lower()
+    name = urllib.parse.unquote(parsed.path.removeprefix("/"), errors="strict")
+    if not name or "/" in name or any(ord(character) < 32 for character in host + name):
+        raise ValueError("An explicit database identity is required")
+    authority = f"[{host}]" if ":" in host else host
+    identity = f"postgresql://{authority}:{parsed.port or 5432}/{urllib.parse.quote(name, safe='')}"
+    return identity, name
+
+
 def database(config):
     source = os.environ["DAL_STAGING_DATABASE_URL"]
     target = os.environ["DAL_STAGING_RESTORE_URL"]
-    src, dst = urllib.parse.urlsplit(source), urllib.parse.urlsplit(target)
-    if src.scheme not in {"postgres", "postgresql"} or dst.scheme not in {"postgres", "postgresql"}:
-        raise ValueError("PostgreSQL URLs required")
-    if source == target or not dst.path.lstrip("/").startswith("dal_audit_restore_"):
+    source_identity, _ = database_identity(source)
+    target_identity, target_name = database_identity(target)
+    # These confirmations must come from an independently reviewed operator
+    # inventory, never from the untrusted smoke-test JSON or URL's hostname.
+    if (os.environ.get("DAL_CONFIRMED_STAGING_SOURCE") != source_identity
+            or os.environ.get("DAL_CONFIRMED_STAGING_TARGET") != target_identity):
+        raise ValueError("Both database identities require separate nonproduction confirmation")
+    if source_identity == target_identity or not target_name.startswith("dal_audit_restore_"):
         raise ValueError("Restore target must be a separate owner-provisioned dal_audit_restore_ database")
-    query = lambda url, sql: command(["psql", "-X", "-A", "-t", url, "-v", "ON_ERROR_STOP=1", "-c", sql])
+    # libpq environment defaults must not redirect an otherwise approved URL.
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE", "PGSYSCONFDIR", "PGOPTIONS"}}
+    query = lambda url, sql: command(["psql", "-X", "-A", "-t", url, "-v", "ON_ERROR_STOP=1", "-c", sql], env)
     if query(target, "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'") != "0":
         raise ValueError("Restore target is not empty; nothing will be overwritten")
     migrations = query(source, "SELECT count(*) FROM _sqlx_migrations WHERE success")
@@ -84,9 +109,9 @@ def database(config):
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="restore-", dir=directory) as temp:
         dump = Path(temp) / "staging.dump"
-        command(["pg_dump", source, "-Fc", "-f", str(dump)])
+        command(["pg_dump", source, "-Fc", "-f", str(dump)], env)
         dump.chmod(0o600)
-        command(["pg_restore", "--exit-on-error", "--no-owner", "--no-acl", "--dbname", target, str(dump)])
+        command(["pg_restore", "--exit-on-error", "--no-owner", "--no-acl", "--dbname", target, str(dump)], env)
     if query(target, "SELECT count(*) FROM _sqlx_migrations WHERE success") != migrations:
         raise RuntimeError("Restored migration journal differs")
 
