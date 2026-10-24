@@ -173,6 +173,7 @@ API listening uses `DAL_LISTEN_ADDR`. `DAL_BASE_URL` is the frontend origin used
 | Method | Path | Description |
 |---|---|---|
 | ``POST`` | ``/auth/register`` | Register a new account |
+| ``POST`` | ``/auth/resend-verification`` | Request a new verification message |
 | ``POST`` | ``/auth/login`` | Log in, sets httpOnly cookies |
 | ``POST`` | ``/auth/logout`` | Invalidate session |
 | ``POST`` | ``/auth/refresh`` | Refresh access token |
@@ -203,6 +204,17 @@ API listening uses `DAL_LISTEN_ADDR`. `DAL_BASE_URL` is the frontend origin used
 | ``DELETE`` | ``/packages/{name}/owners/{username}`` | Remove an owner |
 | ``POST``   | ``/packages/{name}/transfer`` | Transfer ownership |
 
+### Invitations and users
+
+| Method | Path | Description |
+|---|---|---|
+| ``GET`` | ``/owners/invites`` | List pending invitations for the verified session |
+| ``POST`` | ``/owners/invites/{id}/accept`` | Accept an authorized pending invitation |
+| ``POST`` | ``/owners/invites/{id}/decline`` | Decline an authorized pending invitation |
+| ``GET`` | ``/users/{username}`` | Public profile (not private account fields) |
+| ``GET`` | ``/users/{username}/packages`` | Public package list |
+| ``PATCH`` | ``/users/me/profile`` | Authenticated profile update |
+
 ### Tokens
 
 | Method | Path | Description |
@@ -210,6 +222,8 @@ API listening uses `DAL_LISTEN_ADDR`. `DAL_BASE_URL` is the frontend origin used
 | ``GET``    | ``/tokens`` | List your API tokens |
 | ``POST``   | ``/tokens`` | Create a new API token |
 | ``DELETE`` | ``/tokens/{id}`` | Revoke a token |
+
+Token creation/revocation requires a verified interactive session; publishing tokens do not substitute for it.
 
 ### Search & Index
 
@@ -224,6 +238,7 @@ API listening uses `DAL_LISTEN_ADDR`. `DAL_BASE_URL` is the frontend origin used
 |---|---|---|
 | ``GET`` | ``/health`` | Liveness check |
 | ``GET`` | ``/readyz`` | Readiness check (includes DB) |
+| ``DELETE`` | ``/admin/packages/{name}`` | Administrator-only deletion; not a normal owner operation |
 
 ---
 
