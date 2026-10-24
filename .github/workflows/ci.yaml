@@ -78,3 +78,24 @@ jobs:
 
       - name: Run dal-server integration stack
         run: bash ./scripts/test.sh --with-cognito
+
+  workflow-security:
+    name: Workflow input and immutable dependency security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Checkout audited workflow checks (requires coordinated upstream push)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/fidan-actions
+          ref: 9396a96100f75a8f9fdcaf7c97549bea7636523a
+          path: .ci-actions
+          persist-credentials: false
+      - run: python -m pip install PyYAML==6.0.3
+      - run: python .ci-actions/scripts/test-workflows.py
+      - run: python .ci-actions/scripts/check-workflows.py . .ci-actions
+      - run: python scripts/test-candidate-inputs.py

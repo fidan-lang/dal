@@ -37,10 +37,12 @@ jobs:
           $repos = @('fidan', 'dal', 'fidan-actions', 'fidan-editors', 'fidan.dev', 'args')
           if ($refs.Count -ne $repos.Count) { throw 'Exactly six candidate refs required' }
           foreach ($repo in $repos) {
-            if ($refs[$repo] -notmatch '^[a-fA-F0-9]{40}$') { throw "Immutable SHA required: $repo" }
+            if ($refs[$repo] -isnot [string] -or $refs[$repo] -notmatch '\A[a-fA-F0-9]{40}\z') { throw "Immutable SHA required: $repo" }
+          }
+          if ($env:ARGS_REPOSITORY -notmatch '\Afidan-lang/[A-Za-z0-9._-]+\z') { throw 'Owner-approved official args repository required' }
+          foreach ($repo in $repos) {
             "$($repo.Replace('-', '_').Replace('.', '_'))=$($refs[$repo])" >> $env:GITHUB_OUTPUT
           }
-          if ($env:ARGS_REPOSITORY -notmatch '^fidan-lang/[A-Za-z0-9._-]+$') { throw 'Owner-approved official args repository required' }
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: fidan-lang/dal
