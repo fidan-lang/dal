@@ -73,7 +73,6 @@ investment in obtaining, verifying or presenting the collection. Neither the
 existence nor ownership of such rights is established here. Counsel must also
 consider lawful users' rights, exceptions, Article 15, package licenses and
 competition law before relying on any substantial or repeated-extraction claim.
-See the [clause-by-clause review checklist](docs/LEGAL_REVIEW_REQUIRED.md).
 
 ## 4. Proportionate operational response
 
@@ -88,8 +87,7 @@ use the reporting process in [SECURITY.md](SECURITY.md).
 An infrastructure restriction does not revoke an Apache license or an existing
 package license. These draft terms grant no new ownership or exclusive right in
 third-party packages. No service-level guarantee or perpetual hosting commitment
-is created here. Technical implementation and unapplied operator controls are
-separated in [Registry security](docs/REGISTRY_SECURITY.md).
+is created here.
 
 ## 5. Required legal and publication review
 

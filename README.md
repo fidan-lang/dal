@@ -259,10 +259,6 @@ Publishing holds a package-scoped database lock and uses per-attempt object keys
 unknown commit outcomes retain the object for reconciliation. API uploads are limited
 to two concurrent archive operations per process; lower `DAL_MAX_UPLOAD_BYTES` if needed.
 
-Normal CI verifies without deploying. AWS and Pages deployment workflows require manual
-owner approval; AWS ECS/ECR remains dormant. GHCR/Compose candidates are prepared only.
-See [the audit report](ENGINEERING_AUDIT_REPORT.md), [test matrix](E2E_TEST_MATRIX.md),
-[deployment runbook](DEPLOYMENT_RUNBOOK.md) and [release gates](RELEASE_CHECKLIST.md).
 No production relaunch or public `args` package is claimed by this branch.
 
 ---
@@ -287,7 +283,5 @@ and redistribution.
 See [TRADEMARKS.md](TRADEMARKS.md) for separate branding guidance and
 [REGISTRY_TERMS.md](REGISTRY_TERMS.md) for the official hosted service's draft
 acceptable-use terms, which require legal review before publication/enforcement.
-Implemented protections and unapplied operator steps are documented in
-[Registry security](docs/REGISTRY_SECURITY.md).
 
 Copyright © 2026 Kaan Gönüldinc (AppSolves)
