@@ -20,7 +20,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "lint": "prettier --check . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "lint": "node ../scripts/test-frontend-checkout.mjs && prettier --check . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "format": "prettier --write .",
     "e2e": "npx playwright test",
     "e2e:headed": "npx playwright test --headed",
