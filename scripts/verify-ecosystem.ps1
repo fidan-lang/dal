@@ -41,6 +41,9 @@ function Invoke-Gate([string]$Name, [string]$Directory, [string]$Program, [strin
     if ($Program -eq 'cargo' -and $Directory -in @('fidan', 'dal')) {
       node (Join-Path $Root 'dal/scripts/summarize-test-failure.mjs') $log (Join-Path $Root $Directory)
     }
+    if ($Name -in @('cranelift-sweep', 'llvm-sweep')) {
+      node (Join-Path $Root 'dal/scripts/summarize-test-failure.mjs') $log (Join-Path $Root 'fidan') --examples
+    }
     throw "$Name failed. Raw logs stay private; published failure context is limited to known source identities."
   }
 }

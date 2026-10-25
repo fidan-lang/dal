@@ -37,3 +37,32 @@ test("CLI can summarize another exact source checkout without printing its priva
     assert(!result.stdout.includes("password"));
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 });
+
+test("AOT summaries expose only tracked fixture names and closed failure categories", () => {
+  const log = "[FAIL] test\\examples\\known.fdn - timed out after 5 s\nAuthorization: synthetic-secret\n[FAIL] test/examples/unknown-secret.fdn - compile failed\n[FAIL] test/examples/known.fdn - synthetic-secret\n";
+  assert.equal(summarize(log, new Set(), new Map(), new Set(["test/examples/known.fdn"])),
+    "AOT example failed: test/examples/known.fdn (timed out after 5 s)");
+});
+
+test("AOT CLI mode uses the selected checkout index without exposing private stderr", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { execFileSync, spawnSync } = await import("node:child_process");
+  const path = await import("node:path");
+  const target = fileURLToPath(new URL("../target/", import.meta.url));
+  mkdirSync(target, { recursive: true });
+  const scratch = mkdtempSync(path.join(target, "aot-failure-summary-"));
+  try {
+    execFileSync("git", ["init", "--quiet", scratch]);
+    mkdirSync(path.join(scratch, "test/examples"), { recursive:true });
+    writeFileSync(path.join(scratch, "test/examples/known.fdn"), "print(1)\n");
+    execFileSync("git", ["add", "test/examples/known.fdn"], { cwd:scratch });
+    const log = path.join(scratch, "private.log");
+    writeFileSync(log, "[FAIL] test/examples/known.fdn - exited with code 1\nhttps://user:password@example.test\n-----BEGIN PRIVATE KEY-----\n");
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("./summarize-test-failure.mjs", import.meta.url)), log, scratch, "--examples"], { encoding:"utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "AOT example failed: test/examples/known.fdn (exited with code 1)");
+    assert(!result.stdout.includes("password"));
+    assert(!result.stdout.includes("PRIVATE KEY"));
+  } finally { rmSync(scratch, { recursive:true, force:true }); }
+});
