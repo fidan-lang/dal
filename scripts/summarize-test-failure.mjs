@@ -29,7 +29,11 @@ export function summarize(log, knownNames, knownSources = new Map()) {
       locations.add(`Rust panic location: ${match[2]}:${line}`);
     }
   }
-  return [...[...failed].sort().map(name => `Rust test failed: ${name}`), ...locations].join("\n") ||
+  const categories = new Set();
+  for (const match of plain.matchAll(/object upload failed \[(missing_bucket|access_denied|invalid_request|checksum_rejected|authentication_rejected|provider_failure)\]/g)) {
+    categories.add(`Storage upload category: ${match[1]}`);
+  }
+  return [...[...failed].sort().map(name => `Rust test failed: ${name}`), ...locations, ...categories].join("\n") ||
     "No recognized test failure name; raw local logs are retained without publishing potentially sensitive output.";
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
