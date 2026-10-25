@@ -6,3 +6,8 @@ test("failed-test summaries print only known source function names, never captur
   assert.equal(summarize(log, new Set(["login"])), "Rust test failed: login");
   assert(!summarize("token=synthetic-secret", new Set()).includes("synthetic-secret"));
 });
+
+test("panic locations are limited to known source files and real line ranges", () => {
+  const log = "thread 'auth::login' (123) panicked at crates/auth/tests.rs:10:2:\nsecret message\nthread 'auth::login' panicked at crates/credential.rs:1:1:\nthread 'auth::login' panicked at crates/auth/tests.rs:999999999:1:\n";
+  assert.equal(summarize(log, new Set(["login"]), new Map([["crates/auth/tests.rs", 20]])), "Rust panic location: crates/auth/tests.rs:10");
+});
