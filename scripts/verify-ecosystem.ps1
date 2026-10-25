@@ -56,6 +56,9 @@ try {
   }
   Invoke-Gate "compiler-tests" fidan cargo @("test", "--workspace", "--locked")
   $env:FIDAN_BIN = $compiler
+  $env:FIDAN_ARGS_ROOT = Join-Path $Root "args"
+  $env:FIDAN_SETUP_ROOT = Join-Path $Root "fidan-actions"
+  $env:FIDAN_EXPECTED_VERSION = (Get-Content (Join-Path $Root "fidan.dev/ci/compiler-candidate.json") -Raw | ConvertFrom-Json).compiler_version
   if ($FidanHome) { $env:FIDAN_HOME = (Resolve-Path $FidanHome).Path }
   else { $env:FIDAN_HOME = Join-Path $Root "fidan/target/acceptance-home" }
   Invoke-Gate "licenses" dal $Python @("scripts/check-license.py", "../fidan", ".", "../fidan-actions", "../fidan-editors", "../fidan.dev", "../args")

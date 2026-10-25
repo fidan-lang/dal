@@ -22,6 +22,28 @@ try {
   $counts = Get-RustTestCounts $log
   if ($counts.suites -ne 2 -or $counts.passed -ne 8 -or $counts.failed -ne 1 -or $counts.ignored -ne 2) { throw 'Incorrect aggregate test counts' }
   if (($counts | ConvertTo-Json) -match 'synthetic-secret|password|PRIVATE KEY') { throw 'Raw log content entered the public receipt' }
+
+  # Execute the real environment-selection block without launching any tools.
+  $source = $ast.Extent.Text
+  $start = $source.IndexOf('  $env:FIDAN_BIN = $compiler')
+  $end = $source.IndexOf('  if ($FidanHome)', $start)
+  $setup = [scriptblock]::Create($source.Substring($start, $end - $start))
+  $Root = Join-Path $scratch 'candidate'
+  $compiler = Join-Path $Root 'fidan/target/debug/fidan'
+  New-Item -ItemType Directory -Force (Join-Path $Root 'args'), (Join-Path $Root 'fidan.dev/ci') | Out-Null
+  '{"compiler_version":"9.8.7-test"}' | Set-Content (Join-Path $Root 'fidan.dev/ci/compiler-candidate.json')
+  $names = @('FIDAN_BIN', 'FIDAN_ARGS_ROOT', 'FIDAN_SETUP_ROOT', 'FIDAN_EXPECTED_VERSION')
+  $previous = @{}
+  foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
+  try {
+    . $setup
+    if ($env:FIDAN_BIN -ne $compiler -or $env:FIDAN_ARGS_ROOT -ne (Join-Path $Root 'args') -or
+        $env:FIDAN_SETUP_ROOT -ne (Join-Path $Root 'fidan-actions') -or $env:FIDAN_EXPECTED_VERSION -ne '9.8.7-test') {
+      throw 'Acceptance must explicitly select the candidate compiler, args, Setup and version'
+    }
+  } finally {
+    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
+  }
 } finally {
   Remove-Item -LiteralPath $scratch -Recurse -Force
 }
