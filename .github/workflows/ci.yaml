@@ -79,6 +79,12 @@ jobs:
       - name: Run dal-server integration stack
         run: bash ./scripts/test.sh --with-cognito
 
+      - name: Report safe failing Rust test names
+        if: failure()
+        run: |
+          node --test scripts/summarize-test-failure.test.mjs
+          node scripts/summarize-test-failure.mjs
+
   workflow-security:
     name: Workflow input and immutable dependency security
     runs-on: ubuntu-latest
