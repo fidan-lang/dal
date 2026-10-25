@@ -31,8 +31,14 @@ class CandidateInputTests(unittest.TestCase):
                     output.unlink(missing_ok=True)
                     env = {name: os.environ[name] for name in ("PATH", "SystemRoot", "WINDIR") if name in os.environ}
                     env.update(CANDIDATE_REFS=json.dumps(refs), ARGS_REPOSITORY=repository, GITHUB_OUTPUT=str(output))
+                    # A credential-free shell also needs its own writable home/temp:
+                    # avoid host profile/cache discovery and first-run telemetry.
+                    home = scratch / "home"
+                    home.mkdir(exist_ok=True)
+                    env.update(HOME=str(home), USERPROFILE=str(home), TEMP=str(scratch), TMP=str(scratch), TMPDIR=str(scratch),
+                               POWERSHELL_TELEMETRY_OPTOUT="1", DOTNET_CLI_TELEMETRY_OPTOUT="1")
                     result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(script)], env=env,
-                                            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=20)
+                                            cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=20)
                     self.assertEqual(result.returncode == 0, accepted, result.stderr)
                     if accepted:
                         self.assertEqual(len(output.read_text().splitlines()), 6)
