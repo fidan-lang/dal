@@ -11,6 +11,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 class CandidateInputTests(unittest.TestCase):
+    def test_localstack_ready_hook_is_executable_in_git_and_fails_closed(self):
+        staged = subprocess.run(["git", "ls-files", "--stage", "--", "scripts/localstack-init-test.sh"], cwd=ROOT, check=True, capture_output=True, text=True)
+        self.assertTrue(staged.stdout.startswith("100755 "), "LocalStack ignores non-executable init hooks")
+        self.assertNotIn("|| true", (ROOT / "scripts/localstack-init-test.sh").read_text(encoding="utf-8"))
+
     def test_exact_six_sha_and_official_repository_contract(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ecosystem-acceptance.yaml").read_text(encoding="utf-8"))
         guard = next(s for s in workflow["jobs"]["acceptance"]["steps"] if s.get("id") == "refs")
