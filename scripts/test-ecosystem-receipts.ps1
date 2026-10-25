@@ -25,6 +25,11 @@ try {
 
   # Execute the real environment-selection block without launching any tools.
   $source = $ast.Extent.Text
+  $homeSelection = $source.IndexOf('  if ($FidanHome)')
+  $compilerTests = $source.IndexOf('  Invoke-Gate "compiler-tests"')
+  if ($homeSelection -lt 0 -or $homeSelection -gt $compilerTests) {
+    throw 'Candidate helper home must be selected before LLVM-aware workspace tests'
+  }
   $start = $source.IndexOf('  $env:FIDAN_BIN = $compiler')
   $end = $source.IndexOf('  if ($FidanHome)', $start)
   $setup = [scriptblock]::Create($source.Substring($start, $end - $start))
