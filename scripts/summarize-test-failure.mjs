@@ -3,13 +3,13 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
-function testNames(directory, names = new Set(), sources = new Map()) {
+function testNames(directory, names = new Set(), sources = new Map(), repositoryRoot = root) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) testNames(file, names, sources);
+    if (entry.isDirectory()) testNames(file, names, sources, repositoryRoot);
     else if (entry.isFile() && file.endsWith(".rs")) {
       const source = readFileSync(file, "utf8");
-      sources.set(path.relative(root, file).replaceAll("\\", "/"), source.split("\n").length);
+      sources.set(path.relative(repositoryRoot, file).replaceAll("\\", "/"), source.split("\n").length);
       for (const match of source.matchAll(/\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g)) names.add(match[1]);
     }
   }
@@ -37,7 +37,8 @@ export function summarize(log, knownNames, knownSources = new Map()) {
     "No recognized test failure name; raw local logs are retained without publishing potentially sensitive output.";
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const log = readFileSync(path.join(root, "target/audit-logs/local-rust-tests.log"), "utf8");
+  const log = readFileSync(process.argv[2] ?? path.join(root, "target/audit-logs/local-rust-tests.log"), "utf8");
+  const repositoryRoot = path.resolve(process.argv[3] ?? root);
   const sources = new Map();
-  console.log(summarize(log, testNames(path.join(root, "crates"), new Set(), sources), sources));
+  console.log(summarize(log, testNames(path.join(repositoryRoot, "crates"), new Set(), sources, repositoryRoot), sources));
 }

@@ -11,6 +11,16 @@ on:
         type: string
         default: fidan-lang/args
         required: true
+  workflow_call:
+    inputs:
+      candidate_refs:
+        description: 'JSON object with exact 40-character SHAs for fidan, dal, fidan-actions, fidan-editors, fidan.dev and args'
+        type: string
+        required: true
+      args_repository:
+        description: 'Owner-approved args repository; create/push separately before dispatch'
+        type: string
+        required: true
 permissions:
   contents: read
 concurrency:
@@ -39,7 +49,7 @@ jobs:
           foreach ($repo in $repos) {
             if ($refs[$repo] -isnot [string] -or $refs[$repo] -notmatch '\A[a-fA-F0-9]{40}\z') { throw "Immutable SHA required: $repo" }
           }
-          if ($env:ARGS_REPOSITORY -notmatch '\Afidan-lang/[A-Za-z0-9._-]+\z') { throw 'Owner-approved official args repository required' }
+          if ($env:ARGS_REPOSITORY -cne 'fidan-lang/args') { throw 'Owner-approved official args repository required' }
           foreach ($repo in $repos) {
             "$($repo.Replace('-', '_').Replace('.', '_'))=$($refs[$repo])" >> $env:GITHUB_OUTPUT
           }
@@ -85,6 +95,25 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
+      - name: Verify immutable checkouts and synchronized contracts
+        shell: pwsh
+        env:
+          CANDIDATE_REFS: ${{ inputs.candidate_refs }}
+        run: |
+          $refs = $env:CANDIDATE_REFS | ConvertFrom-Json -AsHashtable
+          foreach ($repo in $refs.Keys) {
+            $actual = git -C $repo rev-parse HEAD
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $refs[$repo]) { throw "Source identity mismatch: $repo" }
+            Write-Host "Verified $repo at $actual"
+          }
+          foreach ($repo in @('args', 'fidan-editors', 'fidan.dev')) {
+            node fidan-actions/scripts/verify-candidate.mjs "$repo/ci/compiler-candidate.json" fidan-actions fidan
+            if ($LASTEXITCODE -ne 0) { throw "Compiler/Setup contract mismatch: $repo" }
+          }
+          node fidan.dev/scripts/verify-doc-dependencies.mjs fidan.dev/ci/compiler-candidate.json fidan-actions args dal
+          if ($LASTEXITCODE -ne 0) { throw 'Documentation source contract mismatch' }
+          pwsh -NoProfile -File dal/scripts/test-ecosystem-receipts.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Receipt redaction regression failed' }
       - name: Linux compiler and browser dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config xvfb jq

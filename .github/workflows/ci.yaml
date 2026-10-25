@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      candidate_refs:
+        description: 'Optional exact six-repository SHA JSON for the complete ecosystem acceptance'
+        type: string
+        required: false
+        default: ''
+      args_repository:
+        description: 'Official args repository used by ecosystem acceptance'
+        type: string
+        required: false
+        default: fidan-lang/args
 
 permissions:
   contents: read
@@ -105,3 +116,12 @@ jobs:
       - run: python .ci-actions/scripts/test-workflows.py
       - run: python .ci-actions/scripts/check-workflows.py . .ci-actions
       - run: python scripts/test-candidate-inputs.py
+
+  # CI already exists on main, so this manual entry point works before merging
+  # the new reusable workflow. No default-branch write or deployment is needed.
+  ecosystem-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.candidate_refs != ''
+    uses: ./.github/workflows/ecosystem-acceptance.yaml
+    with:
+      candidate_refs: ${{ inputs.candidate_refs }}
+      args_repository: ${{ inputs.args_repository }}

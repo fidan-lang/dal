@@ -14,6 +14,19 @@ New-Item -ItemType Directory -Force $evidence | Out-Null
 $receipts = [Collections.Generic.List[object]]::new()
 $npm = if ($IsWindows) { "npm.cmd" } else { "npm" }
 $compiler = Join-Path $Root $(if ($IsWindows) { "fidan/target/debug/fidan.exe" } else { "fidan/target/debug/fidan" })
+function Get-RustTestCounts([string]$Log) {
+  $counts = [ordered]@{ suites = 0; passed = 0; failed = 0; ignored = 0 }
+  foreach ($line in Get-Content -LiteralPath $Log) {
+    $plain = $line -replace '\x1b\[[0-9;]*m', ''
+    if ($plain -match '^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;') {
+      $counts.suites++
+      $counts.passed += [int]$Matches[1]
+      $counts.failed += [int]$Matches[2]
+      $counts.ignored += [int]$Matches[3]
+    }
+  }
+  return $counts
+}
 function Invoke-Gate([string]$Name, [string]$Directory, [string]$Program, [string[]]$Arguments) {
   $log = Join-Path $evidence "$Name.private.log"
   $start = [DateTime]::UtcNow.ToString("o")
@@ -22,9 +35,14 @@ function Invoke-Gate([string]$Name, [string]$Directory, [string]$Program, [strin
   catch { $code = 1; "Command launch failed; inspect executable availability" | Add-Content $log }
   finally { Pop-Location }
   if ($null -eq $code) { $code = 0 }
-  $receipts.Add([ordered]@{ name=$Name; cwd=$Directory; program=$Program; arguments=$Arguments; started_utc=$start; ended_utc=[DateTime]::UtcNow.ToString("o"); exit_code=$code; log_sha256=(Get-FileHash $log -Algorithm SHA256).Hash })
+  $receipts.Add([ordered]@{ name=$Name; cwd=$Directory; program=$Program; arguments=$Arguments; started_utc=$start; ended_utc=[DateTime]::UtcNow.ToString("o"); exit_code=$code; rust_test_counts=(Get-RustTestCounts $log); log_sha256=(Get-FileHash $log -Algorithm SHA256).Hash })
   Write-Host "$Name exit=$code"
-  if ($code -ne 0) { throw "$Name failed. Inspect the local private log; do not upload raw authentication fixtures." }
+  if ($code -ne 0) {
+    if ($Program -eq 'cargo' -and $Directory -in @('fidan', 'dal')) {
+      node (Join-Path $Root 'dal/scripts/summarize-test-failure.mjs') $log (Join-Path $Root $Directory)
+    }
+    throw "$Name failed. Raw logs stay private; published failure context is limited to known source identities."
+  }
 }
 try {
   foreach ($repo in @("fidan", "dal", "fidan-actions", "fidan-editors", "fidan.dev", "args")) {
