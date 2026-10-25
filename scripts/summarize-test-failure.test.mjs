@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { summarize } from "./summarize-test-failure.mjs";
+
+// Build mock PEM markers at runtime; no key material is embedded in this source.
+// Multiple literal headers otherwise make static scanners span unrelated tests.
+const mockPrivateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 test("failed-test summaries print only known source function names, never captured payloads", () => {
-  const log = "test auth::login ... FAILED\nthread 'login' panicked: token=synthetic-secret\nleft: eyJ.synthetic.jwt\n-----BEGIN PRIVATE KEY-----\nprivate-value\nhttps://user:password@example.test\ntest synthetic_secret ... FAILED\n";
+  const log = "test auth::login ... FAILED\nthread 'login' panicked: token=synthetic-secret\nleft: eyJ.synthetic.jwt\n" + mockPrivateKeyHeader + "\nprivate-value\nhttps://user:password@example.test\ntest synthetic_secret ... FAILED\n";
   assert.equal(summarize(log, new Set(["login"])), "Rust test failed: login");
   assert(!summarize("token=synthetic-secret", new Set()).includes("synthetic-secret"));
 });
@@ -58,7 +62,7 @@ test("AOT CLI mode uses the selected checkout index without exposing private std
     writeFileSync(path.join(scratch, "test/examples/known.fdn"), "print(1)\n");
     execFileSync("git", ["add", "test/examples/known.fdn"], { cwd:scratch });
     const log = path.join(scratch, "private.log");
-    writeFileSync(log, "[FAIL] test/examples/known.fdn - exited with code 1\nhttps://user:password@example.test\n-----BEGIN PRIVATE KEY-----\n");
+    writeFileSync(log, "[FAIL] test/examples/known.fdn - exited with code 1\nhttps://user:password@example.test\n" + mockPrivateKeyHeader + "\n");
     const result = spawnSync(process.execPath, [fileURLToPath(new URL("./summarize-test-failure.mjs", import.meta.url)), log, scratch, "--examples"], { encoding:"utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "AOT example failed: test/examples/known.fdn (exited with code 1)");
