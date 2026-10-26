@@ -62,6 +62,9 @@ pub enum DalError {
     #[error("rate limit exceeded — try again later")]
     RateLimited,
 
+    #[error("upload timed out; retry the request")]
+    UploadTimeout,
+
     // ── Catch-all ─────────────────────────────────────────────────────────────
     #[error("internal server error")]
     Internal(#[from] anyhow::Error),
@@ -84,6 +87,7 @@ impl DalError {
             | Self::ArchiveTooLarge { .. }
             | Self::ArchiveInvalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Self::UploadTimeout => StatusCode::REQUEST_TIMEOUT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -110,6 +114,7 @@ impl DalError {
             Self::Cognito(_) => "COGNITO_ERROR",
             Self::Sqs(_) => "SQS_ERROR",
             Self::RateLimited => "RATE_LIMITED",
+            Self::UploadTimeout => "UPLOAD_TIMEOUT",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
@@ -119,10 +124,14 @@ impl IntoResponse for DalError {
     fn into_response(self) -> Response {
         let status = self.status();
         let code = self.code();
-        let message = self.to_string();
+        let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
+            "internal server error".to_string()
+        } else {
+            self.to_string()
+        };
 
         if status == StatusCode::INTERNAL_SERVER_ERROR {
-            tracing::error!(code, %message, "internal error");
+            tracing::error!(code, "internal service error");
         } else {
             tracing::debug!(code, %message, "request error");
         }

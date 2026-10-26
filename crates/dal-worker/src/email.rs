@@ -73,11 +73,50 @@ impl MailjetClient {
 
         let status = resp.status();
         if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Mailjet returned {status}: {text}");
+            // Provider response bodies may echo addresses or verification/reset links.
+            anyhow::bail!("Mailjet returned {status}");
         }
 
-        info!(to = to_email, subject, "email sent via Mailjet");
+        info!("email sent via Mailjet");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn failed_notification_is_retried_without_disclosing_provider_payload() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 8192];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 21\r\nConnection: close\r\n\r\nprivate-provider-data").await.unwrap();
+        });
+        let mail = MailjetClient {
+            http: Client::new(),
+            api_key: "test".into(),
+            secret_key: "test".into(),
+            from_email: "test@example.test".into(),
+            from_name: "Test".into(),
+            base_url: format!("http://{addr}"),
+        };
+        let db = dal_db::PgPool::connect_lazy("postgres://dal_test:test@127.0.0.1:5433/dal_test")
+            .unwrap();
+        let result=crate::jobs::dispatch(&json!({"kind":"publish_notify","package":"demo","version":"1.0.0","owners":[{"email":"test@example.test","username":"test"}]}),&db,&mail).await;
+        assert!(
+            result.is_err(),
+            "delivery failure must not acknowledge the queue message"
+        );
+        assert!(
+            !result
+                .unwrap_err()
+                .to_string()
+                .contains("private-provider-data")
+        );
+        server.await.unwrap();
     }
 }

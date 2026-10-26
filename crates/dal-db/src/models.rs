@@ -16,6 +16,8 @@ pub struct User {
     pub website: Option<String>,
     pub is_admin: bool,
     pub email_verified: bool,
+    #[serde(skip_serializing)]
+    pub session_invalid_before: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,8 +53,9 @@ pub struct ApiToken {
     pub id: Uuid,
     pub user_id: Uuid,
     pub name: String,
+    #[serde(skip_serializing)]
     pub token_hash: String, // SHA-256(raw_token)
-    pub prefix: String,     // first 8 chars of raw token (display only)
+    pub prefix: String, // first 8 chars of raw token (display only)
     pub scopes: Vec<String>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,

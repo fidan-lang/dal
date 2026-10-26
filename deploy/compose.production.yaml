@@ -1,0 +1,38 @@
+# Review-only candidate: existing Neon/R2/Cognito/SQS/Mailjet, no local production DB.
+# Set immutable GHCR image references including @sha256 after owner-approved publication.
+services:
+  server:
+    image: ${DAL_SERVER_IMAGE:?approved immutable server image required}
+    env_file: ${DAL_ENV_FILE:?path to protected production environment required}
+    environment:
+      DAL_LISTEN_ADDR: 0.0.0.0:8080
+    ports: ["127.0.0.1:8080:8080"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  worker:
+    # API completes its existing SQLx migration step before exposing health.
+    depends_on:
+      server:
+        condition: service_healthy
+    image: ${DAL_WORKER_IMAGE:?approved immutable worker image required}
+    env_file: ${DAL_ENV_FILE:?path to protected production environment required}
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    stop_grace_period: 180s
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}

@@ -7,6 +7,10 @@
 *.dart text eol=lf
 *.js text eol=lf
 *.ts text eol=lf
+*.mts text eol=lf
+*.mjs text eol=lf
+*.css text eol=lf
+*.html text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
@@ -32,3 +36,8 @@
 *.dll binary
 *.so binary
 *.dylib binary
+
+# Keep the standard license byte-identical in checkouts and packages.
+LICENSE text eol=lf
+
+frontend/static/LICENSE.txt text eol=lf

@@ -96,7 +96,10 @@ function buildCookieHeader(event: RequestEvent): string | null {
   return cookieHeader.length > 0 ? cookieHeader : null;
 }
 
-function applyCookiesFromRefreshResponse(event: RequestEvent, headers: Headers) {
+function applyCookiesFromRefreshResponse(
+  event: RequestEvent,
+  headers: Headers,
+) {
   const domain = sharedCookieDomain(event.url.hostname);
   const secure = event.url.protocol === "https:";
 
@@ -137,9 +140,8 @@ function sharedCookieDomain(hostname: string): string | undefined {
 }
 
 function getSetCookieValues(headers: Headers): string[] {
-  const getSetCookie = (
-    headers as Headers & { getSetCookie?: () => string[] }
-  ).getSetCookie;
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] })
+    .getSetCookie;
   if (typeof getSetCookie === "function") {
     const values = getSetCookie.call(headers);
     if (values.length > 0) return values;

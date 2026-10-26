@@ -2,7 +2,7 @@
 name = "dal-auth"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 authors.workspace = true
 
 [dependencies]
@@ -12,7 +12,7 @@ dal-db.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 sha2.workspace = true
 hex.workspace = true
 rand.workspace = true

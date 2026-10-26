@@ -1,9 +1,12 @@
 use anyhow::Context;
 
+pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8080";
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
     pub listen_addr: String,
+    pub trusted_proxies: Vec<std::net::IpAddr>,
     pub base_url: String,
     pub storage_bucket: String,
     pub storage_endpoint_url: Option<String>,
@@ -27,7 +30,15 @@ impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             database_url: env("DATABASE_URL")?,
-            listen_addr: env_or("DAL_LISTEN_ADDR", "0.0.0.0:8080"),
+            trusted_proxies: std::env::var("DAL_TRUSTED_PROXIES")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .context("invalid DAL_TRUSTED_PROXIES IP")?,
+            listen_addr: env_or("DAL_LISTEN_ADDR", DEFAULT_LISTEN_ADDR),
             base_url: env_or("DAL_BASE_URL", "http://localhost:8080"),
             storage_bucket: env_with_fallback("DAL_STORAGE_BUCKET", "DAL_S3_BUCKET")?,
             storage_endpoint_url: env_optional_with_fallback(
@@ -47,10 +58,9 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty()),
             aws_region: env_or("AWS_REGION", "eu-central-1"),
-            max_upload_bytes: std::env::var("DAL_MAX_UPLOAD_BYTES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(52_428_800),
+            max_upload_bytes: parse_upload_limit(
+                std::env::var("DAL_MAX_UPLOAD_BYTES").ok().as_deref(),
+            )?,
             mailjet_api_key: env("MAILJET_API_KEY")?,
             mailjet_secret_key: env("MAILJET_SECRET_KEY")?,
             mailjet_from_email: env_or("MAILJET_FROM_EMAIL", "noreply@dal.fidan.dev"),
@@ -82,4 +92,34 @@ fn env_optional_with_fallback(primary: &str, legacy: &str) -> Option<String> {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn parse_upload_limit(value: Option<&str>) -> anyhow::Result<u64> {
+    let limit = value
+        .unwrap_or("52428800")
+        .parse::<u64>()
+        .context("DAL_MAX_UPLOAD_BYTES must be a positive integer")?;
+    if limit == 0
+        || limit > 50 * 1024 * 1024
+        || usize::try_from(limit)
+            .ok()
+            .and_then(|n| n.checked_add(65536))
+            .is_none()
+    {
+        anyhow::bail!("DAL_MAX_UPLOAD_BYTES must be between 1 byte and 50 MiB");
+    }
+    Ok(limit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_upload_limit;
+    #[test]
+    fn upload_limit_rejects_invalid_configuration_instead_of_falling_back() {
+        assert_eq!(parse_upload_limit(None).unwrap(), 50 * 1024 * 1024);
+        assert_eq!(parse_upload_limit(Some("1024")).unwrap(), 1024);
+        for input in ["", "oops", "-1", "0", "18446744073709551615", "52428801"] {
+            assert!(parse_upload_limit(Some(input)).is_err());
+        }
+    }
 }

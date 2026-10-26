@@ -1,0 +1,9 @@
+[package]
+name = "playwright-smoke"
+version = "0.1.0"
+description = "A live end-to-end smoke package"
+fidan = ">=1.0.16, <2.0.0"
+readme = "README.md"
+
+homepage = "javascript:globalThis.__dalMetadataInjected=true"
+repository = "https://example.test/source"

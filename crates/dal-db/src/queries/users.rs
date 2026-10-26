@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub async fn create(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,
     username: &str,
     email: &str,
@@ -26,7 +26,10 @@ pub async fn create(
     Ok(user)
 }
 
-pub async fn get_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<User>> {
+pub async fn get_by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> DalResult<Option<User>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
@@ -70,6 +73,17 @@ pub async fn list_stale_unverified(
     Ok(users)
 }
 
+/// Recheck eligibility while holding the same row lock as verification updates.
+pub async fn lock_stale_unverified(
+    connection: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    older_than: chrono::DateTime<chrono::Utc>,
+) -> DalResult<Option<User>> {
+    Ok(sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE id = $1 AND email_verified = false AND created_at < $2 FOR UPDATE",
+    ).bind(user_id).bind(older_than).fetch_optional(connection).await?)
+}
+
 pub async fn get_by_cognito_sub(pool: &PgPool, sub: &str) -> DalResult<Option<User>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE cognito_sub = $1")
         .bind(sub)
@@ -92,7 +106,10 @@ pub async fn get_public_by_username(
     Ok(user)
 }
 
-pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> DalResult<()> {
+pub async fn set_email_verified(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> DalResult<()> {
     sqlx::query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1")
         .bind(user_id)
         .execute(pool)
@@ -100,7 +117,33 @@ pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> DalResult<()> {
     Ok(())
 }
 
-pub async fn delete_unverified(pool: &PgPool, user_id: Uuid) -> DalResult<bool> {
+/// Advance the JWT revocation cutoff without allowing an older request to move
+/// it backwards.
+pub async fn advance_session_invalid_before(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    invalid_before: chrono::DateTime<chrono::Utc>,
+) -> DalResult<()> {
+    sqlx::query(
+        "UPDATE users
+         SET session_invalid_before = CASE
+                 WHEN session_invalid_before IS NULL OR session_invalid_before < $2 THEN $2
+                 ELSE session_invalid_before
+             END,
+             updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .bind(invalid_before)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_unverified(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> DalResult<bool> {
     let result = sqlx::query("DELETE FROM users WHERE id = $1 AND email_verified = false")
         .bind(user_id)
         .execute(pool)
@@ -156,7 +199,7 @@ pub async fn email_exists(pool: &PgPool, email: &str) -> DalResult<bool> {
 
 /// Store verification / password-reset token (hashed).
 pub async fn upsert_verification_token(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     user_id: Uuid,
     token_hash: &str,
     kind: &str,
@@ -179,7 +222,7 @@ pub async fn upsert_verification_token(
 
 /// Consume a verification token. Returns the user_id if valid, None if missing/expired/used.
 pub async fn consume_verification_token(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     token_hash: &str,
     kind: &str,
 ) -> DalResult<Option<Uuid>> {

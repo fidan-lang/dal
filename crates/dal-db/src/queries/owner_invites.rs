@@ -105,11 +105,22 @@ pub async fn accept(
         return Ok(None);
     };
 
+    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+        .bind(invite.package_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let permitted: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM package_owners WHERE package_id=$1 AND user_id=$2 AND role='owner') OR EXISTS(SELECT 1 FROM users WHERE id=$2 AND is_admin=TRUE)")
+        .bind(invite.package_id).bind(invite.inviter_id).fetch_one(&mut *tx).await?;
+    if !permitted.0 {
+        return Err(dal_common::error::DalError::Validation(
+            "inviter no longer has package ownership authority".into(),
+        ));
+    }
     sqlx::query(
         "INSERT INTO package_owners (package_id, user_id, role, invited_by)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (package_id, user_id)
-         DO UPDATE SET role = EXCLUDED.role, invited_by = EXCLUDED.invited_by",
+         DO UPDATE SET role = CASE WHEN package_owners.role = 'owner' THEN 'owner' ELSE EXCLUDED.role END, invited_by = EXCLUDED.invited_by",
     )
     .bind(invite.package_id)
     .bind(invite.invitee_id)

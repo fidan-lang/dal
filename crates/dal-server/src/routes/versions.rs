@@ -1,8 +1,8 @@
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::{Multipart, Path, State},
-    http::{HeaderMap, StatusCode},
+    extract::{ConnectInfo, Multipart, Path, State},
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
     routing::{get, post, put},
 };
 use serde::Deserialize;
@@ -13,9 +13,15 @@ use uuid::Uuid;
 use dal_common::error::DalError;
 use dal_db::queries;
 use dal_manifest::{Lockfile, Manifest};
-use dal_storage::{ArchiveInfo, StorageClient};
+use dal_storage::ArchiveInfo;
 
 use crate::{extractors::AuthActor, state::AppState};
+
+const MAX_USER_AGENT_BYTES: usize = 512;
+const DOWNLOAD_URL_TTL_SECONDS: u64 = 60;
+
+const UPLOAD_CAPACITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const UPLOAD_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -57,8 +63,9 @@ async fn get_version(
 async fn download(
     State(state): State<AppState>,
     Path((name, version)): Path<(String, String)>,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-) -> Result<axum::response::Redirect, DalError> {
+) -> Result<axum::response::Response, DalError> {
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
@@ -66,37 +73,47 @@ async fn download(
         .await?
         .ok_or_else(|| DalError::VersionNotFound(version.clone(), name.clone()))?;
 
-    if ver.yanked {
-        return Err(DalError::Validation(format!(
-            "version `{version}` of `{name}` has been yanked"
-        )));
-    }
+    // Yank affects resolution, not immutable artifact access for existing locks.
+    let url = state
+        .storage
+        .presigned_url(&ver.s3_key, DOWNLOAD_URL_TTL_SECONDS)
+        .await?;
 
-    let url = state.storage.presigned_url(&ver.s3_key, 60).await?;
-
-    // Record download asynchronously
-    let db = state.db.clone();
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
-    let ip_hash = dal_auth::api_token::hash_ip(client_ip);
-    let ver_id = ver.id;
-    let pkg_id = pkg.id;
+    let client_ip = peer.map(|axum::Extension(ConnectInfo(address))| {
+        crate::middleware::rate_limit::extract_client_ip(
+            &headers,
+            address.ip(),
+            &state.cfg.trusted_proxies,
+        )
+        .to_string()
+    });
+    // Without transport peer information, never trust a client-supplied forwarding header.
+    let ip_hash = dal_auth::api_token::hash_ip(client_ip.as_deref().unwrap_or("unknown"));
     let ua = headers
         .get(axum::http::header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned);
-    tokio::spawn(async move {
-        let _ = queries::versions::increment_downloads(&db, ver_id).await;
-        let _ = queries::packages::increment_downloads(&db, pkg_id).await;
-        let _ = queries::versions::record_download(&db, ver_id, &ip_hash, ua.as_deref()).await;
-    });
+        .map(|value| &value[..value.floor_char_boundary(MAX_USER_AGENT_BYTES.min(value.len()))]);
+    state
+        .best_effort_accounting(queries::versions::account_download(
+            &state.db,
+            ver.id,
+            pkg.id,
+            &ip_hash,
+            ua,
+            crate::state::ACCOUNTING_TIMEOUT,
+        ))
+        .await;
 
-    Ok(axum::response::Redirect::temporary(&url))
+    // A signed location is a temporary capability; shared caches must not retain
+    // it or hand an expired URL to a later client.
+    Ok((
+        [
+            (header::CACHE_CONTROL, "private, no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        axum::response::Redirect::temporary(&url),
+    )
+        .into_response())
 }
 
 /// Publish a new package version.
@@ -111,25 +128,44 @@ async fn publish(
     Path(name): Path<String>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), DalError> {
-    // Extract archive bytes from multipart
-    let mut archive_bytes: Option<Bytes> = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| DalError::Validation(format!("multipart error: {e}")))?
-    {
-        if field.name() == Some("archive") {
-            let data = field
-                .bytes()
+    // Hold across collection, decompression and storage, not just the HTTP read.
+    let _slot = upload_phase(UPLOAD_CAPACITY_TIMEOUT, state.publish_slots.acquire())
+        .await?
+        .map_err(|_| DalError::Internal(anyhow::anyhow!("publish capacity unavailable")))?;
+    // Stream and bound the archive itself, independently of multipart framing.
+    let bytes = upload_phase(UPLOAD_BODY_TIMEOUT, async {
+        let mut archive_bytes = None;
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| DalError::Validation(format!("multipart error: {e}")))?
+        {
+            if field.name() != Some("archive") || archive_bytes.is_some() {
+                return Err(DalError::Validation(
+                    "expected exactly one `archive` multipart field".into(),
+                ));
+            }
+            let mut data = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
                 .await
-                .map_err(|e| DalError::Validation(format!("upload read error: {e}")))?;
+                .map_err(|e| DalError::Validation(format!("upload read error: {e}")))?
+            {
+                if (data.len() as u64).saturating_add(chunk.len() as u64)
+                    > state.cfg.max_upload_bytes
+                {
+                    return Err(DalError::ArchiveTooLarge {
+                        max_mb: state.cfg.max_upload_bytes / 1024 / 1024,
+                    });
+                }
+                data.extend_from_slice(&chunk);
+            }
             archive_bytes = Some(data);
-            break;
         }
-    }
-
-    let bytes = archive_bytes
-        .ok_or_else(|| DalError::Validation("missing `archive` field in multipart".into()))?;
+        archive_bytes
+            .ok_or_else(|| DalError::Validation("missing `archive` field in multipart".into()))
+    })
+    .await??;
 
     // Validate archive (security checks, extract manifest)
     let info = dal_storage::validate_archive(&bytes, state.cfg.max_upload_bytes)?;
@@ -146,7 +182,7 @@ async fn publish(
         let lock_bytes = dal_storage::extract_file(&bytes, &info.root_dir, "dal.lock")?
             .ok_or_else(|| {
                 DalError::ManifestInvalid(
-                    "packages with dependencies must include a `dal.lock` file".into(),
+                    "packages with dependencies must include a dal.lock file".into(),
                 )
             })?;
         validate_lockfile_bytes(&manifest, &lock_bytes)?;
@@ -184,13 +220,20 @@ async fn publish(
     };
 
     let user = &actor.user;
-    let mut created_new_package = false;
+    // One transaction and one connection serialize package creation and publication.
+    let mut transaction = state.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("dal-publish:{}", manifest.package.name))
+        .execute(&mut *transaction)
+        .await?;
     // Get or create the package record
-    let pkg = match queries::packages::get_by_name(&state.db, &name).await? {
+    let pkg = match queries::packages::get_by_name(&mut *transaction, &name).await? {
         Some(p) => {
             actor.require_scope(dal_auth::PUBLISH_UPDATE_SCOPE)?;
             // Ownership check
-            if !actor.is_admin() && !queries::packages::is_member(&state.db, p.id, user.id).await? {
+            if !actor.is_admin()
+                && !queries::packages::is_member(&mut *transaction, p.id, user.id).await?
+            {
                 return Err(DalError::Forbidden);
             }
             p
@@ -200,7 +243,7 @@ async fn publish(
             // First publish — create package + set publisher as owner
             let pkg_id = Uuid::new_v4();
             let pkg = queries::packages::create(
-                &state.db,
+                &mut *transaction,
                 queries::packages::NewPackage {
                     id: pkg_id,
                     name: &manifest.package.name,
@@ -214,28 +257,31 @@ async fn publish(
             )
             .await?;
 
-            queries::packages::add_owner(&state.db, pkg_id, user.id, "owner", None).await?;
-            created_new_package = true;
+            queries::packages::add_owner(&mut *transaction, pkg_id, user.id, "owner", None).await?;
             pkg
         }
     };
 
     // Check for duplicate version
-    if queries::versions::exists(&state.db, pkg.id, &version_str).await? {
+    if queries::versions::exists(&mut *transaction, pkg.id, &version_str).await? {
         return Err(DalError::VersionAlreadyExists(version_str, name));
     }
 
     // Upload archive to object storage
-    let s3_key = StorageClient::object_key(&pkg.name, &version_str);
+    let ver_id = Uuid::new_v4();
+    // A failed attempt must never delete another attempt's uploaded object.
+    let s3_key = format!(
+        "packages/{}/{version_str}/{ver_id}/{}-{version_str}.tar.gz",
+        pkg.name, pkg.name
+    );
     state
         .storage
         .upload(&s3_key, bytes.to_vec(), "application/gzip")
         .await?;
 
     // Persist version record
-    let ver_id = Uuid::new_v4();
-    let created_version = match queries::versions::create(
-        &state.db,
+    match queries::versions::create(
+        &mut *transaction,
         queries::versions::NewPackageVersion {
             id: ver_id,
             package_id: pkg.id,
@@ -250,16 +296,16 @@ async fn publish(
     )
     .await
     {
-        Ok(version) => version,
+        Ok(_) => {}
         Err(err) => {
-            cleanup_failed_publish(&state, pkg.id, &s3_key, created_new_package, None).await;
+            cleanup_failed_publish(&state, &s3_key).await;
             return Err(err);
         }
     };
 
     // Update package metadata from latest manifest
     if let Err(err) = queries::packages::update_metadata(
-        &state.db,
+        &mut *transaction,
         queries::packages::PackageMetadataUpdate {
             id: pkg.id,
             description: manifest.package.description.as_deref(),
@@ -273,16 +319,12 @@ async fn publish(
     )
     .await
     {
-        cleanup_failed_publish(
-            &state,
-            pkg.id,
-            &s3_key,
-            created_new_package,
-            Some(created_version.id),
-        )
-        .await;
+        cleanup_failed_publish(&state, &s3_key).await;
         return Err(err);
     }
+
+    // A failed commit can be ambiguous; retain the object rather than break a committed version.
+    transaction.commit().await?;
 
     // Audit log
     let _ = queries::audit::record(
@@ -308,7 +350,7 @@ async fn publish(
 fn validate_publish_contract(manifest: &Manifest, info: &ArchiveInfo) -> Result<(), DalError> {
     if manifest.has_runtime_dependencies() && !info.files.contains("dal.lock") {
         return Err(DalError::ManifestInvalid(
-            "packages with dependencies must include a `dal.lock` file".into(),
+            "packages with dependencies must include a dal.lock file".into(),
         ));
     }
 
@@ -330,36 +372,9 @@ fn validate_lockfile_bytes(manifest: &Manifest, bytes: &[u8]) -> Result<(), DalE
         .map_err(|e| DalError::ManifestInvalid(e.to_string()))
 }
 
-async fn cleanup_failed_publish(
-    state: &AppState,
-    package_id: Uuid,
-    s3_key: &str,
-    created_new_package: bool,
-    created_version_id: Option<Uuid>,
-) {
+async fn cleanup_failed_publish(state: &AppState, s3_key: &str) {
     if let Err(err) = state.storage.delete(s3_key).await {
-        warn!(s3_key, error = %err, "failed to roll back uploaded archive after publish failure");
-    }
-
-    if created_new_package {
-        if let Err(err) = queries::packages::delete(&state.db, package_id).await {
-            warn!(
-                package_id = %package_id,
-                error = %err,
-                "failed to roll back newly created package after publish failure"
-            );
-        }
-        return;
-    }
-
-    if let Some(version_id) = created_version_id
-        && let Err(err) = queries::versions::delete(&state.db, version_id).await
-    {
-        warn!(
-            version_id = %version_id,
-            error = %err,
-            "failed to roll back created package version after publish failure"
-        );
+        warn!(s3_key, error = %err, "unpublished archive requires reconciliation after failed publish");
     }
 }
 
@@ -389,6 +404,7 @@ mod tests {
             package: dal_manifest::PackageMeta {
                 name: "demo".into(),
                 version: "1.0.0".into(),
+                fidan: None,
                 description: None,
                 license: None,
                 repository: None,
@@ -422,6 +438,7 @@ mod tests {
             package: dal_manifest::PackageMeta {
                 name: "demo".into(),
                 version: "1.0.0".into(),
+                fidan: None,
                 description: None,
                 license: None,
                 repository: None,
@@ -454,6 +471,7 @@ mod tests {
             package: dal_manifest::PackageMeta {
                 name: "demo".into(),
                 version: "1.0.0".into(),
+                fidan: None,
                 description: None,
                 license: None,
                 repository: None,
@@ -491,6 +509,7 @@ mod tests {
             package: dal_manifest::PackageMeta {
                 name: "demo".into(),
                 version: "1.0.0".into(),
+                fidan: None,
                 description: None,
                 license: None,
                 repository: None,
@@ -584,4 +603,37 @@ async fn unyank(
     }
 
     Ok(Json(json!({ "message": "unyanked" })))
+}
+
+// Apply a total wall-clock budget, so dribbling chunks cannot retain archive slots.
+// DB/object-store phases keep their existing transaction and SDK timeout semantics.
+async fn upload_phase<T>(
+    duration: std::time::Duration,
+    operation: impl std::future::Future<Output = T>,
+) -> Result<T, DalError> {
+    tokio::time::timeout(duration, operation)
+        .await
+        .map_err(|_| DalError::UploadTimeout)
+}
+
+#[cfg(test)]
+mod upload_timeout_tests {
+    use super::*;
+    #[tokio::test]
+    async fn stalled_upload_phase_times_out_with_public_http_contract() {
+        let error = upload_phase(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<()>(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.status(), StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(error.code(), "UPLOAD_TIMEOUT");
+        assert_eq!(
+            upload_phase(std::time::Duration::from_secs(1), std::future::ready(42))
+                .await
+                .unwrap(),
+            42
+        );
+    }
 }

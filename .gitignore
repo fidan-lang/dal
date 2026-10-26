@@ -42,3 +42,5 @@ lcov.info
 # Deployment
 .serverless/
 cdk.out/
+
+.env.test

@@ -28,6 +28,13 @@ async fn main() -> anyhow::Result<()> {
     log_aws_runtime_probe("dal-worker");
 
     let aws_cfg = aws_config::defaults(BehaviorVersion::latest())
+        .timeout_config(
+            aws_config::timeout::TimeoutConfig::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .read_timeout(std::time::Duration::from_secs(30))
+                .operation_timeout(std::time::Duration::from_secs(60))
+                .build(),
+        )
         .region(Region::new(
             std::env::var("AWS_REGION").unwrap_or_else(|_| "eu-central-1".into()),
         ))

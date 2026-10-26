@@ -41,7 +41,7 @@ impl PageParams {
     /// OFFSET for SQL query.
     pub fn offset(&self) -> i64 {
         let (page, per_page) = self.validated();
-        ((page - 1) * per_page) as i64
+        i64::from(page - 1) * i64::from(per_page)
     }
 }
 
@@ -83,5 +83,28 @@ where
     match QueryNumber::deserialize(deserializer)? {
         QueryNumber::Number(value) => Ok(value),
         QueryNumber::Text(value) => value.parse::<u32>().map_err(serde::de::Error::custom),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_pagination_accepts_the_full_query_parameter_domain() {
+        let params = PageParams {
+            page: u32::MAX,
+            per_page: 100,
+        };
+        assert_eq!(params.offset(), 429_496_729_400);
+        assert_eq!(params.limit(), 100);
+        assert_eq!(
+            PageParams {
+                page: 0,
+                per_page: 0
+            }
+            .offset(),
+            0
+        );
     }
 }

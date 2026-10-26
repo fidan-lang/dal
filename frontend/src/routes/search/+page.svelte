@@ -38,6 +38,7 @@
     >
         <input
             type="search"
+                aria-label="Search packages"
             bind:value={q}
             placeholder="Search packages…"
             class="w-full min-[540px]:flex-1 min-w-0 px-4 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-all duration-300 text-sm"

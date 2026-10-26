@@ -16,6 +16,10 @@ use crate::state::AppState;
 /// OR the `dal_access_token` cookie for browser sessions.
 /// API tokens are still accepted via `Authorization: Bearer dal_...`.
 pub struct AuthUser(pub User);
+
+/// Credential administration and session operations require a verified JWT session.
+/// API credentials are rejected before token lookup/touch or any provider operation.
+pub struct VerifiedSession(pub User);
 pub struct AuthActor {
     pub user: User,
     pub api_token: Option<ApiToken>,
@@ -23,7 +27,7 @@ pub struct AuthActor {
 
 impl AuthActor {
     pub fn is_admin(&self) -> bool {
-        self.user.is_admin
+        self.user.is_admin && self.user.email_verified && self.api_token.is_none()
     }
 
     pub fn require_admin(&self) -> Result<(), DalError> {
@@ -35,6 +39,9 @@ impl AuthActor {
     }
 
     pub fn require_scope(&self, scope: &str) -> Result<(), DalError> {
+        if !self.user.email_verified {
+            return Err(DalError::Forbidden);
+        }
         if let Some(token) = &self.api_token
             && !has_scope(&token.scopes, scope)
         {
@@ -56,6 +63,27 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
+impl FromRequestParts<AppState> for VerifiedSession {
+    type Rejection = DalError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let token = extract_auth_token(&parts.headers).ok_or(DalError::Unauthorized)?;
+        // Session-only endpoints reject the API-credential class (403), including
+        // expired/invalid API credentials, without updating usage or calling Cognito.
+        if token.starts_with("dal_") {
+            return Err(DalError::Forbidden);
+        }
+        let actor = AuthActor::from_request_parts(parts, state).await?;
+        if !actor.user.email_verified {
+            return Err(DalError::Forbidden);
+        }
+        Ok(Self(actor.user))
+    }
+}
+
 impl FromRequestParts<AppState> for AuthActor {
     type Rejection = DalError;
 
@@ -74,12 +102,9 @@ impl FromRequestParts<AppState> for AuthActor {
             let api_tok = queries::tokens::get_by_hash(&state.db, &hash).await?;
             let api_tok = api_tok.ok_or(DalError::Unauthorized)?;
 
-            // Touch last_used_at (fire-and-forget)
-            let db = state.db.clone();
-            let id = api_tok.id;
-            tokio::spawn(async move {
-                let _ = queries::tokens::touch(&db, id).await;
-            });
+            state
+                .best_effort_accounting(queries::tokens::touch(&state.db, api_tok.id))
+                .await;
 
             let user = queries::users::get_by_id(&state.db, api_tok.user_id).await?;
             let user = user.ok_or(DalError::Unauthorized)?;
@@ -90,17 +115,38 @@ impl FromRequestParts<AppState> for AuthActor {
             });
         }
 
-        // Otherwise validate as Cognito JWT
-        let claims: Claims = state.jwt.validate(&token).await?;
-        let user = queries::users::get_by_cognito_sub(&state.db, &claims.sub)
-            .await?
-            .ok_or(DalError::Unauthorized)?;
+        let user = authenticated_session(state, &token).await?;
 
         Ok(AuthActor {
             user,
             api_token: None,
         })
     }
+}
+
+/// One JWT session contract for authorization, login and refresh responses.
+pub(crate) async fn authenticated_session(state: &AppState, token: &str) -> Result<User, DalError> {
+    let claims: Claims = state.jwt.validate(token).await?;
+    let user = queries::users::get_by_cognito_sub(&state.db, &claims.sub)
+        .await?
+        .ok_or(DalError::Unauthorized)?;
+    if session_was_revoked(claims.iat, claims.auth_time, user.session_invalid_before) {
+        return Err(DalError::Unauthorized);
+    }
+    Ok(user)
+}
+
+/// Cognito timestamps have whole-second resolution. Revoke the entire cutoff
+/// second, including refreshed tokens from an earlier authentication epoch.
+fn session_was_revoked(
+    issued_at_seconds: i64,
+    authenticated_at_seconds: Option<i64>,
+    invalid_before: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    invalid_before.is_some_and(|cutoff| {
+        authenticated_at_seconds
+            .is_none_or(|epoch| epoch.min(issued_at_seconds) <= cutoff.timestamp())
+    })
 }
 
 /// Optional authenticated user — returns `None` for anonymous requests.
@@ -147,4 +193,26 @@ fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
             None
         }
     })
+}
+
+#[cfg(test)]
+mod session_revocation_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn session_revocation_fails_closed_for_the_cutoff_second() {
+        let cutoff = Utc.timestamp_opt(1_700_000_000, 500_000_000).unwrap();
+        assert!(session_was_revoked(
+            1_700_000_000,
+            Some(1_700_000_000),
+            Some(cutoff)
+        ));
+        assert!(!session_was_revoked(
+            1_700_000_001,
+            Some(1_700_000_001),
+            Some(cutoff)
+        ));
+        assert!(!session_was_revoked(1_700_000_000, None, None));
+    }
 }

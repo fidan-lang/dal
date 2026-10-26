@@ -1,17 +1,19 @@
-import DOMPurify from "dompurify";
+import sanitizeHtml from "sanitize-html";
 import { marked } from "marked";
 
-/**
- * Safely converts a Markdown string to sanitised HTML.
- * Only runs DOMPurify in browser environments.
- */
+/** Sanitize untrusted package Markdown identically during SSR and hydration. */
 export function renderMarkdown(md: string): string {
-  const raw = marked.parse(md, { async: false }) as string;
-  if (typeof window === "undefined") {
-    // SSR: return raw (no XSS vector since it's rendered as innerHTML client-side)
-    return raw;
-  }
-  return DOMPurify.sanitize(raw);
+  return sanitizeHtml(marked.parse(md, { async: false }) as string, {
+    allowedTags: [...sanitizeHtml.defaults.allowedTags, "img"],
+    allowedAttributes: {
+      ...sanitizeHtml.defaults.allowedAttributes,
+      img: ["src", "alt", "title"],
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowProtocolRelative: false,
+    nestingLimit: 64,
+    parseStyleAttributes: false,
+  });
 }
 
 /** Format a number with thousands separators */
@@ -46,4 +48,20 @@ export function timeAgo(iso: string): string {
 export function truncate(s: string, maxLen: number): string {
   if (s.length <= maxLen) return s;
   return s.slice(0, maxLen - 1) + "…";
+}
+
+/** Untrusted persisted metadata must not create executable URLs or SSR errors. */
+export function safeWebUrl(value: string | null | undefined): URL | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) &&
+      url.hostname &&
+      !url.username &&
+      !url.password
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
 }

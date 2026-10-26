@@ -12,7 +12,7 @@ use dal_auth::{ApiTokenRaw, api_token::generate_api_token, normalize_scopes};
 use dal_common::error::DalError;
 use dal_db::queries;
 
-use crate::{extractors::AuthActor, state::AppState};
+use crate::{extractors::VerifiedSession, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -23,9 +23,9 @@ pub fn router() -> Router<AppState> {
 
 async fn list_tokens(
     State(state): State<AppState>,
-    actor: AuthActor,
+    VerifiedSession(user): VerifiedSession,
 ) -> Result<Json<Value>, DalError> {
-    let tokens = queries::tokens::list_for_user(&state.db, actor.user.id).await?;
+    let tokens = queries::tokens::list_for_user(&state.db, user.id).await?;
     Ok(Json(serde_json::to_value(&tokens).unwrap_or_default()))
 }
 
@@ -38,7 +38,7 @@ struct CreateTokenBody {
 
 async fn create_token(
     State(state): State<AppState>,
-    actor: AuthActor,
+    VerifiedSession(user): VerifiedSession,
     Json(body): Json<CreateTokenBody>,
 ) -> Result<(StatusCode, Json<Value>), DalError> {
     if body.name.trim().is_empty() || body.name.len() > 64 {
@@ -54,7 +54,7 @@ async fn create_token(
 
     let token_record = queries::tokens::create(
         &state.db,
-        actor.user.id,
+        user.id,
         body.name.trim(),
         &hash,
         &prefix,
@@ -74,10 +74,10 @@ async fn create_token(
 
 async fn delete_token(
     State(state): State<AppState>,
-    actor: AuthActor,
+    VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
-    let deleted = queries::tokens::delete(&state.db, id, actor.user.id).await?;
+    let deleted = queries::tokens::delete(&state.db, id, user.id).await?;
     if !deleted {
         return Err(DalError::Validation("token not found".into()));
     }

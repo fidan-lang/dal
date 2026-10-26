@@ -1,8 +1,9 @@
 [package]
 name = "dal-server"
+default-run = "dal-server"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 authors.workspace = true
 
 [lib]
@@ -43,3 +44,8 @@ aws-sdk-sqs.workspace = true
 hex.workspace = true
 sqlx.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+jsonwebtoken.workspace = true
+flate2.workspace = true
+tar.workspace = true

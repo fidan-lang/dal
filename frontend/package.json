@@ -15,23 +15,28 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "prebuild": "npm run sync-legal",
+    "sync-legal": "node -e \"const fs=require('fs'); for (const name of ['LICENSE','NOTICE']) fs.copyFileSync('../'+name, 'static/'+name+'.txt');\"",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "lint": "prettier --check . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "lint": "node ../scripts/test-frontend-checkout.mjs && prettier --check . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "format": "prettier --write .",
     "e2e": "npx playwright test",
     "e2e:headed": "npx playwright test --headed",
-    "e2e:serve": "vite preview --host localhost --port 4174 --strictPort"
+    "e2e:serve": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
+    "e2e:safety": "node e2e/check-endpoints.mjs",
+    "check:markdown": "node e2e/check-markdown.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260310.1",
+    "@cloudflare/workers-types": "^5.20261018.1",
     "@playwright/test": "^1.58.2",
     "@sveltejs/adapter-cloudflare": "^7.2.8",
     "@sveltejs/kit": "^2.54.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^25.5.0",
+    "@types/sanitize-html": "^2.16.2",
     "autoprefixer": "^10.4.19",
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
@@ -45,7 +50,16 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "dompurify": "^3.1.6",
-    "marked": "^17.0.4"
-  }
+    "marked": "^17.0.4",
+    "sanitize-html": "^2.18.1"
+  },
+  "overrides": {
+    "@sveltejs/kit": {
+      "cookie": "^0.7.2"
+    },
+    "miniflare": {
+      "undici": "7.30.1"
+    }
+  },
+  "license": "Apache-2.0"
 }

@@ -26,3 +26,24 @@ async fn unknown_route_returns_404() {
     let res = app.get("/this/path/does/not/exist").await;
     assert_eq!(res.status(), 404);
 }
+
+#[tokio::test]
+async fn readyz_returns_unavailable_when_its_database_pool_is_closed() {
+    use axum::{body::Body, http::Request};
+    use dal_server::{app::build_router, state::AppState};
+    use tower::ServiceExt;
+    let state = AppState::build(&common::test_config()).await.unwrap();
+    state.db.close().await;
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = common::TestApp::unpack(response).await;
+    assert_eq!(status, 503);
+    assert_eq!(body["db"], "error");
+}

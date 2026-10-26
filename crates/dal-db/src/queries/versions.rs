@@ -16,7 +16,7 @@ pub struct NewPackageVersion<'a> {
 }
 
 pub async fn create(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     new_version: NewPackageVersion<'_>,
 ) -> DalResult<PackageVersion> {
     let v = sqlx::query_as::<_, PackageVersion>(
@@ -77,7 +77,11 @@ pub async fn latest(pool: &PgPool, package_id: Uuid) -> DalResult<Option<Package
     Ok(v)
 }
 
-pub async fn exists(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult<bool> {
+pub async fn exists(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    version: &str,
+) -> DalResult<bool> {
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(SELECT 1 FROM package_versions WHERE package_id = $1 AND version = $2)",
     )
@@ -126,7 +130,10 @@ pub async fn unyank(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult
     Ok(res.rows_affected() > 0)
 }
 
-pub async fn increment_downloads(pool: &PgPool, id: Uuid) -> DalResult<()> {
+pub async fn increment_downloads(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> DalResult<()> {
     sqlx::query("UPDATE package_versions SET downloads = downloads + 1 WHERE id = $1")
         .bind(id)
         .execute(pool)
@@ -154,7 +161,7 @@ pub async fn download_chart(
 }
 
 pub async fn record_download(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     version_id: Uuid,
     ip_hash: &str,
     user_agent: Option<&str>,
@@ -168,5 +175,27 @@ pub async fn record_download(
     .bind(user_agent)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Counters and the detail row commit together; cancelled/failed accounting rolls back.
+pub async fn account_download(
+    pool: &PgPool,
+    version_id: Uuid,
+    package_id: Uuid,
+    ip_hash: &str,
+    user_agent: Option<&str>,
+    budget: std::time::Duration,
+) -> DalResult<()> {
+    let mut tx = pool.begin().await?;
+    // Also bound server-side SQL after the request future is cancelled.
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!("{}ms", budget.as_millis()))
+        .execute(&mut *tx)
+        .await?;
+    increment_downloads(&mut *tx, version_id).await?;
+    super::packages::increment_downloads(&mut *tx, package_id).await?;
+    record_download(&mut *tx, version_id, ip_hash, user_agent).await?;
+    tx.commit().await?;
     Ok(())
 }

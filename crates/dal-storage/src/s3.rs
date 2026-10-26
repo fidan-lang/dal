@@ -1,3 +1,4 @@
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::{Client, presigning::PresigningConfig, primitives::ByteStream};
 use dal_common::error::DalError;
 use std::time::Duration;
@@ -61,7 +62,12 @@ impl StorageClient {
             .body(stream)
             .send()
             .await
-            .map_err(|e| DalError::Storage(e.to_string()))?;
+            .map_err(|error| {
+                // Never include raw SDK requests, signed URLs or provider messages.
+                let category =
+                    upload_failure_category(error.as_service_error().and_then(|e| e.code()));
+                DalError::Storage(format!("object upload failed [{category}]"))
+            })?;
         Ok(())
     }
 
@@ -120,4 +126,36 @@ impl StorageClient {
 fn is_path_style_endpoint(url: &str) -> bool {
     let lowered = url.to_ascii_lowercase();
     lowered.contains("localhost") || lowered.contains("127.0.0.1") || lowered.contains("localstack")
+}
+
+fn upload_failure_category(code: Option<&str>) -> &'static str {
+    match code {
+        Some("NoSuchBucket") => "missing_bucket",
+        Some("AccessDenied") => "access_denied",
+        Some("InvalidRequest" | "InvalidArgument") => "invalid_request",
+        Some("BadDigest" | "InvalidDigest") => "checksum_rejected",
+        Some("SignatureDoesNotMatch" | "InvalidAccessKeyId") => "authentication_rejected",
+        _ => "provider_failure",
+    }
+}
+
+#[cfg(test)]
+mod upload_error_tests {
+    use super::*;
+    #[test]
+    fn upload_errors_expose_only_closed_categories_not_provider_payloads() {
+        assert_eq!(
+            upload_failure_category(Some("NoSuchBucket")),
+            "missing_bucket"
+        );
+        assert_eq!(
+            upload_failure_category(Some("BadDigest")),
+            "checksum_rejected"
+        );
+        assert_eq!(
+            upload_failure_category(Some("https://user:secret@example.test?token=secret")),
+            "provider_failure"
+        );
+        assert_eq!(upload_failure_category(None), "provider_failure");
+    }
 }

@@ -1,4 +1,4 @@
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, http::StatusCode, routing::get};
 use serde_json::json;
 
 use crate::state::AppState;
@@ -15,9 +15,20 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn readyz(
     axum::extract::State(state): axum::extract::State<AppState>,
-) -> Json<serde_json::Value> {
-    match sqlx::query("SELECT 1").execute(&state.db).await {
-        Ok(_) => Json(json!({ "status": "ready", "db": "ok" })),
-        Err(_) => Json(json!({ "status": "degraded", "db": "error" })),
+) -> (StatusCode, Json<serde_json::Value>) {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sqlx::query("SELECT 1").execute(&state.db),
+    )
+    .await
+    {
+        Ok(Ok(_)) => (
+            StatusCode::OK,
+            Json(json!({ "status": "ready", "db": "ok" })),
+        ),
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "degraded", "db": "error" })),
+        ),
     }
 }

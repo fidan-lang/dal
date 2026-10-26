@@ -37,9 +37,15 @@ cargo run -p dal-server
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
+
+The fully isolated backend/browser gate is documented in README:
+`node scripts/test-local.mjs --with-cognito --e2e`. It uses fake credentials and a private
+Cognito state directory; do not run integration tests against a production `.env`.
+For interactive frontend development set `PUBLIC_API_BASE=http://localhost:8080`;
+otherwise the API client defaults to the public registry.
 
 Before submitting a pull request, make sure the project builds successfully and all relevant tests pass.
 
@@ -258,3 +264,51 @@ See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for more details.
 ## Final Note
 
 By contributing to Fidan, you help improve the language and its ecosystem for everyone. Thank you for your contribution.
+
+
+### Workspace attribution copies
+
+The root `LICENSE` and `NOTICE` are authoritative. Crate-level legal files are generated copies
+so Cargo source archives preserve attribution alongside the standard license. When
+updating root legal files, synchronize first-party crates from the repository root:
+
+```powershell
+Get-ChildItem crates -Directory | ForEach-Object { Copy-Item LICENSE, NOTICE $_.FullName }
+```
+
+CI checks the copies against the root. Do not edit crate legal copies independently or
+apply this operation to third-party dependencies. Workspace license metadata uses
+SPDX `Apache-2.0`; the standard license file remains included in package archives.
+
+## Private image release requirements
+
+Image publication is manual, main-only and requires the protected `ghcr-release`
+environment with independent reviewers, no self-review/admin bypass and a main-only
+branch rule. Neither PRs nor ordinary pushes publish images. Dry builds do not log
+in to GHCR. `scripts/check-private-ghcr.py` fails before publication if existing
+package PRIVATE visibility, anonymous denial or environment protection is unconfirmed.
+It never creates packages or changes visibility. A missing package therefore blocks
+first publication; any administrator bootstrap needs separate approval.
+
+Before approving a release, the organization owner must:
+
+- Confirm **both** packages are PRIVATE; disable repository access inheritance and
+  review direct users, teams, Actions and Codespaces access. Permit only the owner
+  and named build/deployment principals. Public source access must confer no image access.
+- Configure environment-only `GHCR_VISIBILITY_TOKEN` (read-only inspection),
+  `GHCR_PUBLISH_TOKEN` (dedicated publisher, only required package write access),
+  and `GHCR_PULL_TOKEN` (dedicated deployment reader, `read:packages`, no write/delete).
+  Set `GHCR_PUBLISH_USER` and `GHCR_PULL_USER`; do not put credentials in CLI arguments.
+- Record `GHCR_PRIVATE_ACCESS_REVIEW=PRIVATE_ACCESS_REVIEWED:<server-id>:<worker-id>`
+  in that environment only after reviewing the actual package IDs and full ACLs.
+  REST visibility metadata does not prove inheritance or the complete ACL.
+- Keep automatic repository linkage disabled; no public-source OCI source label
+  is added. Recheck permissions after any manual linkage change.
+- Independently disposition container/dependency CVEs and approve migration,
+  provider/privacy/legal, backup/restore and rollback gates in a private operator handoff.
+
+After separately approved publication, the workflow rechecks PRIVATE visibility and
+anonymous denial, verifies a digest-pinned pull with the deployment reader, and
+retains non-sensitive identity receipts. SBOM/provenance are attached to the images;
+retain approved immutable rollback digests and credentials before a production rollout.
+No successful build, receipt or approval string is a production-security waiver.

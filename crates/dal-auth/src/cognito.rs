@@ -134,30 +134,34 @@ impl CognitoClient {
             .await
             .map_err(|e| self.cognito_request_error("admin_create_user", Some(username), e))?;
 
-        // Promote to CONFIRMED by setting a permanent password
-        self.inner
-            .admin_set_user_password()
-            .user_pool_id(&self.pool_id)
-            .username(username)
-            .password(password)
-            .permanent(true)
-            .send()
-            .await
-            .map_err(|e| {
-                self.cognito_request_error("admin_set_user_password", Some(username), e)
-            })?;
-
-        let sub = resp
-            .user()
-            .and_then(|u| {
-                u.attributes()
-                    .iter()
-                    .find(|a| a.name() == "sub")
-                    .and_then(|a| a.value())
-            })
-            .unwrap_or(username)
-            .to_string();
-        Ok(sub)
+        let prepared = async {
+            let sub = resp
+                .user()
+                .and_then(|user| {
+                    user.attributes()
+                        .iter()
+                        .find(|attribute| attribute.name() == "sub")
+                        .and_then(|attribute| attribute.value())
+                })
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    DalError::Cognito("admin_create_user returned no subject identifier".into())
+                })?
+                .to_owned();
+            // Reuse the password contract used by reset; this confirms the new identity.
+            self.admin_set_password(username, password).await?;
+            Ok(sub)
+        }
+        .await;
+        if prepared.is_err() && self.admin_delete_user_if_exists(username).await.is_err() {
+            // AdminCreate succeeded, but no DB identity can be created after this error.
+            tracing::error!(
+                username,
+                operation = "admin_create_user:rollback",
+                "new Cognito identity requires reconciliation"
+            );
+        }
+        prepared
     }
 
     /// Sign up a new user. Does NOT send a Cognito verification email
@@ -195,6 +199,23 @@ impl CognitoClient {
 
     /// Manually confirm a user in Cognito (called after our email verification flow).
     pub async fn admin_confirm_user(&self, username: &str) -> Result<(), DalError> {
+        // Permanent-password registration already confirms Cognito. Legacy SignUp
+        // identities still need confirmation; don't swallow unrelated provider errors.
+        let user = self
+            .inner
+            .admin_get_user()
+            .user_pool_id(&self.pool_id)
+            .username(username)
+            .send()
+            .await
+            .map_err(|error| {
+                self.cognito_request_error("admin_get_user:confirmation", Some(username), error)
+            })?;
+        if user.user_status()
+            == Some(&aws_sdk_cognitoidentityprovider::types::UserStatusType::Confirmed)
+        {
+            return Ok(());
+        }
         self.inner
             .admin_confirm_sign_up()
             .user_pool_id(&self.pool_id)
@@ -250,8 +271,10 @@ impl CognitoClient {
         {
             Ok(_) => Ok(true),
             Err(err) => {
-                let debug = format!("{err:?}");
-                if debug.contains("UserNotFoundException") {
+                if err
+                    .as_service_error()
+                    .is_some_and(|e| e.is_user_not_found_exception())
+                {
                     warn!(
                         operation = "admin_delete_user",
                         username,
@@ -284,42 +307,26 @@ impl CognitoClient {
     fn cognito_request_error<E>(
         &self,
         operation: &'static str,
-        username: Option<&str>,
-        err: E,
+        _username: Option<&str>,
+        _err: E,
     ) -> DalError
     where
         E: Debug + Display,
     {
-        error!(
-            operation,
-            username = username.unwrap_or("<none>"),
-            pool_id = %self.pool_id,
-            client_id = %self.client_id,
-            error_display = %err,
-            error_debug = ?err,
-            "cognito sdk request failed"
-        );
+        error!(operation, "cognito sdk request failed");
         DalError::Cognito(format!("cognito {operation} failed"))
     }
 
     fn cognito_context_error<E>(
         &self,
         operation: &'static str,
-        username: Option<&str>,
-        err: E,
+        _username: Option<&str>,
+        _err: E,
     ) -> DalError
     where
         E: Debug + Display,
     {
-        error!(
-            operation,
-            username = username.unwrap_or("<none>"),
-            pool_id = %self.pool_id,
-            client_id = %self.client_id,
-            error_display = %err,
-            error_debug = ?err,
-            "cognito request setup failed"
-        );
+        error!(operation, "cognito request setup failed");
         DalError::Cognito(format!("cognito {operation} failed"))
     }
 }

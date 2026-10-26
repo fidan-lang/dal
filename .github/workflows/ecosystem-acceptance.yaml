@@ -1,0 +1,210 @@
+name: Candidate ecosystem acceptance (no publication)
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_refs:
+        description: 'JSON object with exact 40-character SHAs for fidan, dal, fidan-actions, fidan-editors, fidan.dev and args'
+        type: string
+        required: true
+      args_repository:
+        description: 'Owner-approved args repository; create/push separately before dispatch'
+        type: string
+        default: fidan-lang/args
+        required: true
+  workflow_call:
+    inputs:
+      candidate_refs:
+        description: 'JSON object with exact 40-character SHAs for fidan, dal, fidan-actions, fidan-editors, fidan.dev and args'
+        type: string
+        required: true
+      args_repository:
+        description: 'Owner-approved args repository; create/push separately before dispatch'
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: ecosystem-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  acceptance:
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Validate immutable candidate inputs
+        id: refs
+        shell: pwsh
+        env:
+          CANDIDATE_REFS: ${{ inputs.candidate_refs }}
+          ARGS_REPOSITORY: ${{ inputs.args_repository }}
+        run: |
+          $refs = $env:CANDIDATE_REFS | ConvertFrom-Json -AsHashtable
+          $repos = @('fidan', 'dal', 'fidan-actions', 'fidan-editors', 'fidan.dev', 'args')
+          if ($refs.Count -ne $repos.Count) { throw 'Exactly six candidate refs required' }
+          foreach ($repo in $repos) {
+            if ($refs[$repo] -isnot [string] -or $refs[$repo] -notmatch '\A[a-fA-F0-9]{40}\z') { throw "Immutable SHA required: $repo" }
+          }
+          if ($env:ARGS_REPOSITORY -cne 'fidan-lang/args') { throw 'Owner-approved official args repository required' }
+          foreach ($repo in $repos) {
+            "$($repo.Replace('-', '_').Replace('.', '_'))=$($refs[$repo])" >> $env:GITHUB_OUTPUT
+          }
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/dal
+          ref: ${{ steps.refs.outputs.dal }}
+          path: dal
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/fidan
+          ref: ${{ steps.refs.outputs.fidan }}
+          path: fidan
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/fidan-actions
+          ref: ${{ steps.refs.outputs.fidan_actions }}
+          path: fidan-actions
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/fidan-editors
+          ref: ${{ steps.refs.outputs.fidan_editors }}
+          path: fidan-editors
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: fidan-lang/fidan.dev
+          ref: ${{ steps.refs.outputs.fidan_dev }}
+          path: fidan.dev
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: ${{ inputs.args_repository }}
+          ref: ${{ steps.refs.outputs.args }}
+          path: args
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          components: clippy,rustfmt
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+      - name: Verify immutable checkouts and synchronized contracts
+        shell: pwsh
+        env:
+          CANDIDATE_REFS: ${{ inputs.candidate_refs }}
+        run: |
+          $refs = $env:CANDIDATE_REFS | ConvertFrom-Json -AsHashtable
+          foreach ($repo in $refs.Keys) {
+            $actual = git -C $repo rev-parse HEAD
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $refs[$repo]) { throw "Source identity mismatch: $repo" }
+            Write-Host "Verified $repo at $actual"
+          }
+          foreach ($repo in @('args', 'fidan-editors', 'fidan.dev')) {
+            node fidan-actions/scripts/verify-candidate.mjs "$repo/ci/compiler-candidate.json" fidan-actions fidan
+            if ($LASTEXITCODE -ne 0) { throw "Compiler/Setup contract mismatch: $repo" }
+          }
+          node fidan.dev/scripts/verify-doc-dependencies.mjs fidan.dev/ci/compiler-candidate.json fidan-actions args dal
+          if ($LASTEXITCODE -ne 0) { throw 'Documentation source contract mismatch' }
+          pwsh -NoProfile -File dal/scripts/test-ecosystem-receipts.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Receipt redaction regression failed' }
+      - name: Linux compiler and browser dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config xvfb jq
+      - name: Install browser used by the actual candidate lockfiles
+        shell: pwsh
+        run: |
+          foreach ($dir in @('fidan.dev', 'dal/frontend')) {
+            Push-Location $dir
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+            npx playwright install --with-deps chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Browser installation failed' }
+            Pop-Location
+          }
+      - name: Execute clean-checkout acceptance
+        shell: pwsh
+        env:
+          ACCEPTANCE_ROOT: ${{ github.workspace }}
+        run: |
+          ./dal/scripts/verify-ecosystem.ps1 -Root $env:ACCEPTANCE_ROOT -SkipContainers:($env:RUNNER_OS -ne 'Linux')
+      - name: Upload sanitized command/SHA/status receipts only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ecosystem-${{ matrix.os }}-${{ github.run_attempt }}
+          path: dal/target/acceptance/receipts.json
+          if-no-files-found: error
+
+      - name: Linux candidate images and complete vulnerability evidence
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: dal
+        run: |
+          set -euo pipefail
+          mkdir -p target/audit-tools
+          cd target/audit-tools
+          curl -fL --retry 2 -o syft.tar.gz https://github.com/anchore/syft/releases/download/v1.55.0/syft_1.55.0_linux_amd64.tar.gz
+          echo 'bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d  syft.tar.gz' | sha256sum -c -
+          tar -xzf syft.tar.gz syft
+          curl -fL --retry 2 -o grype.tar.gz https://github.com/anchore/grype/releases/download/v0.121.0/grype_0.121.0_linux_amd64.tar.gz
+          echo '64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519  grype.tar.gz' | sha256sum -c -
+          tar -xzf grype.tar.gz grype
+          cd ../..
+          docker build --pull --target server -t dal-server:acceptance .
+          docker build --pull --target worker -t dal-worker:acceptance .
+          DAL_SERVER_IMAGE=dal-server:acceptance DAL_WORKER_IMAGE=dal-worker:acceptance node scripts/test-images.mjs
+          pwsh -NoProfile -File scripts/scan-images.ps1 -ServerImage dal-server:acceptance -WorkerImage dal-worker:acceptance -Syft ./target/audit-tools/syft -Grype ./target/audit-tools/grype
+      - name: Linux redacted secret scan and dependency audit evidence
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dal/target/source-security
+          curl -fL --retry 2 -o dal/target/audit-tools/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  dal/target/audit-tools/gitleaks.tar.gz' | sha256sum -c -
+          tar -xzf dal/target/audit-tools/gitleaks.tar.gz -C dal/target/audit-tools gitleaks
+          mkdir -p dal/target/scan-source
+          for repo in fidan dal fidan-actions fidan-editors fidan.dev args; do
+            mkdir -p "dal/target/scan-source/$repo"
+            git -C "$repo" archive HEAD | tar -x -C "dal/target/scan-source/$repo"
+            ./dal/target/audit-tools/gitleaks dir "dal/target/scan-source/$repo" --redact --no-banner --report-format json --report-path "dal/target/source-security/$repo.secrets.json"
+          done
+          python3 dal/scripts/test-audit-collector.py
+          cargo install cargo-audit --version 0.22.0 --locked
+          # Finding exits (1) are retained for review; tool/network/schema failures fail closed.
+          collect_audit() {
+            dir="$1"; report="$2"; kind="$3"; shift 3
+            set +e
+            (cd "$dir" && "$@") > "$report"
+            code=$?
+            set -e
+            if [ "$code" -gt 1 ]; then echo "Audit tool failed: $dir exit=$code" >&2; return "$code"; fi
+            if [ "$kind" = rust ]; then
+              jq -e '.vulnerabilities | (.found | type == "boolean") and (.count | type == "number")' "$report" > /dev/null
+            else
+              jq -e '.metadata.vulnerabilities.total | type == "number"' "$report" > /dev/null
+            fi
+            printf '%s audit exit=%s (findings require separate security review)\n' "$dir" "$code"
+          }
+          collect_audit fidan dal/target/source-security/fidan.rust.json rust cargo audit --json
+          collect_audit dal dal/target/source-security/dal.rust.json rust cargo audit --json
+          for repo in fidan.dev dal/frontend fidan-editors/vscode; do
+            collect_audit "$repo" "dal/target/source-security/$(echo "$repo" | tr / -).npm.json" npm npm audit --json
+          done
+
+      - name: Upload SBOMs and unfiltered security reports (no image archives)
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ecosystem-security-${{ github.run_attempt }}
+          path: |
+            dal/target/image-security/*.json
+            dal/target/source-security/*.json
+          if-no-files-found: warn

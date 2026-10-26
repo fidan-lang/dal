@@ -59,6 +59,8 @@ async fn update_profile(
     Json(body): Json<UpdateProfileBody>,
 ) -> Result<Json<Value>, DalError> {
     actor.require_scope(dal_auth::USER_WRITE_SCOPE)?;
+    validate_profile_url(body.website.as_deref(), "website")?;
+    validate_profile_url(body.avatar_url.as_deref(), "avatar_url")?;
 
     let updated = queries::users::update_profile(
         &state.db,
@@ -72,4 +74,53 @@ async fn update_profile(
     Ok(Json(
         serde_json::to_value(CurrentUserResponse::from(updated)).unwrap_or_default(),
     ))
+}
+
+fn validate_profile_url(value: Option<&str>, field: &str) -> Result<(), DalError> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let parsed = url::Url::parse(value).ok();
+    if !parsed.as_ref().is_some_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.has_host()
+            && url.username().is_empty()
+            && url.password().is_none()
+    }) {
+        return Err(DalError::Validation(format!(
+            "{field} must be an HTTP(S) URL without embedded credentials"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod profile_url_tests {
+    use super::*;
+    #[test]
+    fn public_profile_links_require_web_urls_without_credentials() {
+        for value in [
+            None,
+            Some(""),
+            Some("https://example.test/profile"),
+            Some("http://localhost:8080/avatar.png"),
+        ] {
+            validate_profile_url(value, "website").unwrap();
+        }
+        for value in [
+            "javascript:alert(1)",
+            "data:text/html,unsafe",
+            "not a URL",
+            "//example.test",
+            "https://user:password@example.test",
+            "file:///etc/passwd",
+        ] {
+            assert_eq!(
+                validate_profile_url(Some(value), "website")
+                    .unwrap_err()
+                    .status(),
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+    }
 }

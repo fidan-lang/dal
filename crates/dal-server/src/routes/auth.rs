@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     routing::{get, post},
 };
-use chrono::{Duration, Utc};
+use chrono::{Duration, Timelike, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use url::Url;
@@ -15,7 +15,11 @@ use dal_auth::api_token::hash_token as sha256_hex;
 use dal_common::error::DalError;
 use dal_db::queries;
 
-use crate::{extractors::AuthUser, responses::CurrentUserResponse, state::AppState};
+use crate::{
+    extractors::{AuthUser, VerifiedSession, authenticated_session},
+    responses::CurrentUserResponse,
+    state::AppState,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -109,40 +113,61 @@ async fn register(
         .admin_create_user(&username, &body.password, &email)
         .await?;
 
-    // Create DB user
     let user_id = Uuid::new_v4();
-    if let Err(err) = queries::users::create(
-        &state.db,
-        user_id,
-        &username,
-        &email,
-        &cognito_sub,
-        body.display_name.as_deref(),
-    )
-    .await
-    {
-        if let Err(cleanup_err) = state.cognito.admin_delete_user_if_exists(&username).await {
-            tracing::error!(
-                username,
-                error = %cleanup_err,
-                "failed to roll back Cognito user after registration DB failure"
-            );
-        }
-        return Err(err);
-    }
-
-    // Generate + store email verification token
     let raw_token = format!("ev_{}", hex::encode(Uuid::new_v4().as_bytes()));
     let token_hash = sha256_hex(&raw_token);
     let expires_at = Utc::now() + Duration::hours(24);
-    queries::users::upsert_verification_token(
-        &state.db,
-        user_id,
-        &token_hash,
-        "email_verify",
-        expires_at,
-    )
-    .await?;
+    // Both DB records must exist before registration can be committed.
+    let pending = async {
+        let mut transaction = state.db.begin().await?;
+        queries::users::create(
+            &mut *transaction,
+            user_id,
+            &username,
+            &email,
+            &cognito_sub,
+            body.display_name.as_deref(),
+        )
+        .await?;
+        queries::users::upsert_verification_token(
+            &mut *transaction,
+            user_id,
+            &token_hash,
+            "email_verify",
+            expires_at,
+        )
+        .await?;
+        Ok::<_, DalError>(transaction)
+    }
+    .await;
+    let transaction = match pending {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            if state
+                .cognito
+                .admin_delete_user_if_exists(&username)
+                .await
+                .is_err()
+            {
+                tracing::error!(
+                    username,
+                    operation = "registration:rollback",
+                    "new Cognito identity requires reconciliation after DB failure"
+                );
+            }
+            return Err(error);
+        }
+    };
+    // On an ambiguous commit retain the provider identity; deleting it could break
+    // a registration the database actually committed.
+    if let Err(error) = transaction.commit().await {
+        tracing::error!(
+            username,
+            operation = "registration:commit",
+            "registration outcome requires reconciliation"
+        );
+        return Err(error.into());
+    }
 
     // Enqueue verification email via SQS (non-fatal — user can request resend)
     if let Err(e) = enqueue_email(
@@ -249,7 +274,19 @@ async fn login(
         ));
     }
 
+    // Revocation rejects the entire cutoff second because Cognito iat is integral.
+    // Authenticate only after that second has ended; otherwise a successful fresh
+    // login immediately returns a token that our own authorization must reject.
+    if let Some(cutoff) = db_user.session_invalid_before {
+        let next_epoch = cutoff.with_nanosecond(0).unwrap() + Duration::seconds(1);
+        if let Ok(remaining) = (next_epoch - Utc::now()).to_std() {
+            tokio::time::sleep(remaining).await;
+        }
+    }
+
     let (_access, id_token, refresh) = state.cognito.sign_in(&username, &body.password).await?;
+    // A concurrent revocation must never receive a success-shaped cookie response.
+    let db_user = authenticated_session(&state, &id_token).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -291,9 +328,12 @@ async fn login(
 
 async fn logout(
     State(state): State<AppState>,
-    AuthUser(user): AuthUser,
+    VerifiedSession(user): VerifiedSession,
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
-    let _ = state.cognito.admin_sign_out(&user.username).await;
+    revoke_global_session(&state.cognito, &user.username).await?;
+    // Include tokens issued while the provider request was in flight. The
+    // cutoff is monotonic; whole-second iat equality deliberately fails closed.
+    queries::users::advance_session_invalid_before(&state.db, user.id, Utc::now()).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -327,6 +367,15 @@ async fn logout(
     Ok((headers, Json(json!({ "message": "logged out" }))))
 }
 
+/// A successful logout means Cognito has invalidated the user's refresh tokens.
+/// Do not clear browser cookies and report success when that provider operation fails.
+async fn revoke_global_session(
+    cognito: &dal_auth::CognitoClient,
+    username: &str,
+) -> Result<(), DalError> {
+    cognito.admin_sign_out(username).await
+}
+
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -341,6 +390,7 @@ async fn refresh(
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
     let refresh_token = resolve_refresh_token(&headers, &body)?;
     let (_access, id) = state.cognito.refresh(&refresh_token).await?;
+    authenticated_session(&state, &id).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -367,20 +417,25 @@ async fn verify_email(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<VerifyParams>,
 ) -> Result<Json<Value>, DalError> {
+    let mut transaction = state.db.begin().await?;
     let hash = sha256_hex(&params.token);
-    let user_id = queries::users::consume_verification_token(&state.db, &hash, "email_verify")
-        .await?
-        .ok_or(DalError::Validation(
-            "invalid or expired verification token".into(),
-        ))?;
+    let user_id =
+        queries::users::consume_verification_token(&mut *transaction, &hash, "email_verify")
+            .await?
+            .ok_or(DalError::Validation(
+                "invalid or expired verification token".into(),
+            ))?;
 
-    queries::users::set_email_verified(&state.db, user_id).await?;
+    queries::users::set_email_verified(&mut *transaction, user_id).await?;
 
     // Confirm the user in Cognito so they can log in
-    if let Some(user) = queries::users::get_by_id(&state.db, user_id).await? {
-        let _ = state.cognito.admin_confirm_user(&user.username).await;
+    if let Some(user) = queries::users::get_by_id(&mut *transaction, user_id).await? {
+        state.cognito.admin_confirm_user(&user.username).await?;
+    } else {
+        return Err(DalError::Validation("account no longer exists".into()));
     }
 
+    transaction.commit().await?;
     Ok(Json(
         json!({ "message": "email verified; you may now log in" }),
     ))
@@ -404,26 +459,40 @@ async fn forgot_password(
         let token_hash = sha256_hex(&raw_token);
         let expires_at = Utc::now() + Duration::hours(1);
 
-        let _ = queries::users::upsert_verification_token(
+        match queries::users::upsert_verification_token(
             &state.db,
             user.id,
             &token_hash,
             "password_reset",
             expires_at,
         )
-        .await;
-
-        let _ = enqueue_email(
-            &state,
-            serde_json::json!({
-                "kind": "password_reset",
-                "user_id": user.id,
-                "email": email,
-                "username": user.username,
-                "token": raw_token,
-            }),
-        )
-        .await;
+        .await
+        {
+            Ok(()) => {
+                if enqueue_email(
+                    &state,
+                    serde_json::json!({
+                        "kind": "password_reset", "user_id": user.id, "email": email,
+                        "username": user.username, "token": raw_token,
+                    }),
+                )
+                .await
+                .is_err()
+                {
+                    tracing::error!(
+                        operation = "password_reset:enqueue",
+                        "reset delivery failed; caller may request a new link"
+                    );
+                }
+            }
+            Err(_) => {
+                // Preserve the generic public response without sending an invalid link.
+                tracing::error!(
+                    operation = "password_reset:store",
+                    "reset persistence failed; no email queued"
+                );
+            }
+        }
     }
 
     Ok(Json(
@@ -449,14 +518,16 @@ async fn reset_password(
         ));
     }
 
+    let mut transaction = state.db.begin().await?;
     let hash = sha256_hex(&body.token);
-    let user_id = queries::users::consume_verification_token(&state.db, &hash, "password_reset")
-        .await?
-        .ok_or(DalError::Validation(
-            "invalid or expired reset token".into(),
-        ))?;
+    let user_id =
+        queries::users::consume_verification_token(&mut *transaction, &hash, "password_reset")
+            .await?
+            .ok_or(DalError::Validation(
+                "invalid or expired reset token".into(),
+            ))?;
 
-    let user = queries::users::get_by_id(&state.db, user_id)
+    let user = queries::users::get_by_id(&mut *transaction, user_id)
         .await?
         .ok_or(DalError::Unauthorized)?;
 
@@ -464,7 +535,9 @@ async fn reset_password(
         .cognito
         .admin_set_password(&user.username, &body.new_password)
         .await?;
+    queries::users::advance_session_invalid_before(&mut *transaction, user.id, Utc::now()).await?;
 
+    transaction.commit().await?;
     Ok(Json(
         json!({ "message": "password reset; you may now log in" }),
     ))
@@ -547,4 +620,71 @@ async fn enqueue_email(state: &AppState, payload: serde_json::Value) -> Result<(
         state.cfg.aws_region,
         last_err.unwrap_or_else(|| "unknown error".to_string())
     )))
+}
+
+#[cfg(test)]
+mod logout_tests {
+    use super::*;
+    use aws_config::{BehaviorVersion, Region};
+    use aws_sdk_sqs::config::Credentials;
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode},
+    };
+    use serde_json::json;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[tokio::test]
+    async fn logout_propagates_a_real_cognito_global_sign_out_failure() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = requests.clone();
+        let provider = Router::new().fallback(move |headers: HeaderMap| {
+            let observed = observed.clone();
+            async move {
+                assert_eq!(
+                    headers
+                        .get("x-amz-target")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|target| target.rsplit('.').next()),
+                    Some("AdminUserGlobalSignOut")
+                );
+                observed.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "__type": "ServiceUnavailableException",
+                        "message": "fixture provider outage"
+                    })),
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let provider_task = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+
+        let aws = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("eu-central-1"))
+            .credentials_provider(Credentials::new("test", "test", None, None, "local-test"))
+            .retry_config(aws_config::retry::RetryConfig::disabled())
+            .load()
+            .await;
+        let cognito = dal_auth::CognitoClient::from_sdk_config(
+            &aws,
+            "local_logout_pool".into(),
+            "local_logout_client".into(),
+            Some(&endpoint),
+        );
+
+        let error = revoke_global_session(&cognito, "logout-fixture")
+            .await
+            .expect_err("a failed global sign-out must not be reported as logout success");
+        assert!(matches!(error, DalError::Cognito(_)));
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        provider_task.abort();
+    }
 }
