@@ -285,3 +285,14 @@ See [TRADEMARKS.md](TRADEMARKS.md) for separate branding guidance and
 acceptable-use terms, which require legal review before publication/enforcement.
 
 Copyright © 2026 Kaan Gönüldinc (AppSolves)
+
+## Release and image policy
+
+Official prebuilt `ghcr.io/fidan-lang/dal-server` and `dal-worker` images must remain
+**private**, with no anonymous pulls or inherited public-repository access. The
+Apache-2.0 source remains available for independent builds and hosting.
+See [private image release requirements](CONTRIBUTING.md#private-image-release-requirements).
+
+Production DAL must be approved and operational after Fidan 1.1.0 stable and its
+protocol-8 LLVM helper are released, and **before** the first args 0.1.0 publication.
+No production launch or package/image publication follows automatically from CI.

@@ -21,12 +21,22 @@ jobs:
     environment: ghcr-release
     permissions:
       contents: read
-      packages: write
+      packages: read
     strategy:
       matrix:
         target: [server, worker]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Confirm PRIVATE packages and release safeguards before registry login
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_VISIBILITY_TOKEN }}
+          GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_PRIVATE_ACCESS_REVIEW: ${{ vars.GHCR_PRIVATE_ACCESS_REVIEW }}
+        run: python3 scripts/check-private-ghcr.py --receipt target/private-ghcr-before.json
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3, verified official tag
         with:
           platforms: arm64
@@ -35,16 +45,49 @@ jobs:
         if: inputs.publish
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+          username: ${{ vars.GHCR_PUBLISH_USER }}
+          password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+      - id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ inputs.publish }}
           tags: ghcr.io/fidan-lang/dal-${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # Do not auto-link private packages to the public source repository.
+          labels: org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=dal-${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=dal-${{ matrix.target }}
+      - name: Verify actual published visibility and immutable digest
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_VISIBILITY_TOKEN }}
+          GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_PRIVATE_ACCESS_REVIEW: ${{ vars.GHCR_PRIVATE_ACCESS_REVIEW }}
+          IMAGE_TARGET: ${{ matrix.target }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: python3 scripts/check-private-ghcr.py --target "$IMAGE_TARGET" --digest "$IMAGE_DIGEST" --receipt target/private-ghcr-after.json
+      - name: Authenticate dedicated read-only deployment principal
+        if: inputs.publish
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_PULL_USER }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
+      - name: Verify authorized immutable pull
+        if: inputs.publish
+        env:
+          IMAGE_TARGET: ${{ matrix.target }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: docker pull --platform linux/amd64 "ghcr.io/fidan-lang/dal-$IMAGE_TARGET@$IMAGE_DIGEST"
+      - name: Preserve visibility and rollback identity receipts
+        if: always() && inputs.publish
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: private-ghcr-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/private-ghcr-*.json
+          if-no-files-found: error
