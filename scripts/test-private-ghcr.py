@@ -28,6 +28,8 @@ class PrivateImages(unittest.TestCase):
         build = next(step for step in steps if "docker/build-push-action@" in step.get("uses", ""))
         self.assertNotIn("org.opencontainers.image.source", build["with"]["labels"])
         self.assertEqual(build["with"]["push"], "${{ inputs.publish }}")
+        self.assertNotIn("cache-to", build["with"], "Private image layers must not enter a public repository cache")
+        self.assertNotIn("cache-from", build["with"])
 
     def test_only_explicit_private_packages_are_accepted(self):
         for value in ("public", "internal", None):

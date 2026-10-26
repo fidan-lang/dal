@@ -59,8 +59,8 @@ jobs:
           labels: org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=dal-${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=dal-${{ matrix.target }}
+          # Public-repository Actions caches are readable by fork PRs.
+          # Keep private image layers inside the ephemeral builder.
       - name: Verify actual published visibility and immutable digest
         if: inputs.publish
         env:
