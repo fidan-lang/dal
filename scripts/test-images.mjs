@@ -167,6 +167,11 @@ try {
     const inspection = JSON.parse(docker(["inspect", name]))[0];
     assert(inspection.HostConfig.ReadonlyRootfs);
     assert.equal(inspection.HostConfig.Memory, 512 * 1024 * 1024);
+    assert(inspection.HostConfig.CapDrop.includes("ALL"));
+    assert(inspection.HostConfig.SecurityOpt.includes("no-new-privileges:true"));
+    assert(inspection.Config.Healthcheck?.Test?.length > 1, "Production image requires a real healthcheck");
+    assert(!JSON.parse(docker(["image", "inspect", inspection.Image]))[0].Config.Env.some(value => /^(?:AWS_|DAL_STORAGE_).*(?:KEY|TOKEN|SECRET)=|^(?:DATABASE_URL|MAILJET_API_KEY|MAILJET_SECRET_KEY)=/.test(value)),
+      "Runtime test credentials are injected at run time, not embedded in the image");
     let downloadLoad;
     if (kind === "server") {
       let ready = false;
@@ -232,6 +237,8 @@ try {
       uid: 10001,
       readOnly: true,
       idleStats: JSON.parse(stats),
+      runtimeLibraries: docker(["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges:true", "--entrypoint", "/usr/bin/ldd", inspection.Image, `/usr/local/bin/dal-${kind}`]),
       ...(downloadLoad ? { downloadLoad } : {}),
       exitCode: stopped.State.ExitCode,
     });

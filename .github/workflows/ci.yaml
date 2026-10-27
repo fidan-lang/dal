@@ -65,6 +65,11 @@ jobs:
       - name: Check production cryptography dependency graph
         run: python3 scripts/test-dependency-security.py
 
+      - name: Check container evidence and private publication policy
+        run: |
+          python3 scripts/test-image-dispositions.py
+          python3 scripts/test-private-ghcr.py
+
       - name: Check public-download edge policy
         run: python3 scripts/test-edge-protection.py
 
