@@ -21,6 +21,8 @@ pub struct AppState {
     pub cognito: Arc<CognitoClient>,
     pub jwt: Arc<JwtValidator>,
     pub rate: Arc<RateLimiter>,
+    pub public_reads: Arc<crate::middleware::public_reads::PublicReadLimits>,
+    pub download_slots: Arc<tokio::sync::Semaphore>,
     /// SQS queue URL for dispatching background jobs.
     pub sqs_url: String,
     pub sqs_client: Arc<aws_sdk_sqs::Client>,
@@ -49,6 +51,7 @@ impl AppState {
     }
 
     pub async fn build(cfg: &Config) -> anyhow::Result<Self> {
+        cfg.public_reads.validate()?;
         // Database
         let db = dal_db::connect(&cfg.database_url).await?;
         dal_db::migrate(&db).await?;
@@ -114,6 +117,12 @@ impl AppState {
             cognito: Arc::new(cognito),
             jwt: Arc::new(jwt),
             rate: Arc::new(rate),
+            public_reads: Arc::new(crate::middleware::public_reads::PublicReadLimits::new(
+                &cfg.public_reads,
+            )),
+            download_slots: Arc::new(tokio::sync::Semaphore::new(
+                cfg.public_reads.concurrent_downloads,
+            )),
             sqs_url: cfg.sqs_queue_url.clone(),
             sqs_client: Arc::new(sqs_client),
             cfg: Arc::new(cfg.clone()),

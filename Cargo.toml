@@ -43,6 +43,7 @@ tokio = { version = "1", features = ["full"] }
 # ── Web framework ────────────────────────────────────────────────────────────
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tower = { version = "0.5" }
+http-body = "1"
 tower-http = { version = "0.6", features = [
   "cors",
   "trace",
@@ -69,13 +70,14 @@ sqlx = { version = "0.8", features = [
 
 # ── AWS SDK ──────────────────────────────────────────────────────────────────
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "http-1x", "sigv4a"] }
+# R2 and the supported regional S3 endpoints use SigV4, not SigV4a/MRAP.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "http-1x"] }
 aws-sdk-cognitoidentityprovider = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-smithy-runtime-api = "1"
 
 # ── Auth / Crypto ────────────────────────────────────────────────────────────
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 sha2 = "0.11"
 hex = "0.4"
 rand = { version = "0.10" }
@@ -108,7 +110,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # ── Concurrency / Rate-limiting ──────────────────────────────────────────────
-dashmap = "6"
 governor = "0.10"
 
 # ── Environment ──────────────────────────────────────────────────────────────

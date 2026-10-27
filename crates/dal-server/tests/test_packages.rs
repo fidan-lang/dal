@@ -524,3 +524,16 @@ async fn corrupted_persisted_manifest_fails_index_without_disclosing_database_da
     assert_eq!(status, 500);
     assert!(!body.to_string().contains("private-marker"));
 }
+
+#[tokio::test]
+async fn search_treats_sql_control_characters_as_literal_input() {
+    let app = common::TestApp::spawn().await;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("q", "' OR 1=1; DROP TABLE packages; --")
+        .finish();
+    let (status, body) = common::TestApp::unpack(app.get(&format!("/search?{query}")).await).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["total"], 0);
+    assert!(body["items"].as_array().unwrap().is_empty());
+    assert_eq!(app.get("/packages").await.status(), 200);
+}

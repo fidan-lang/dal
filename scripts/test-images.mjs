@@ -1,11 +1,17 @@
 import { randomUUID, createHash } from "node:crypto";
 // Local OCI smoke gate: dedicated services, fake credentials, no host secret mounts.
 import assert from "node:assert/strict";
+import { checkDownloadLoad } from "./test-download-load.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+assert(process.argv.slice(2).every(flag => flag === "--with-cli"), "Unknown image-test option");
+const compiler = process.argv.includes("--with-cli")
+  ? path.resolve(process.env.FIDAN_BIN ?? path.join(root, "../fidan/target/debug", process.platform === "win32" ? "fidan.exe" : "fidan"))
+  : undefined;
+if (compiler) assert.equal(spawnSync(compiler, ["--version"], { windowsHide: true }).status, 0, "Actual compiler required for concurrent package installs");
 mkdirSync(path.join(root, "target"), { recursive: true });
 const scratch = mkdtempSync(path.join(root, "target", "image-test-"));
 const project = `dal-image-audit-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -113,6 +119,7 @@ try {
     DAL_LISTEN_ADDR: "0.0.0.0:8080",
     DAL_BASE_URL: "http://localhost:4174",
     RUST_LOG: "warn",
+    DAL_DOWNLOAD_TIMEOUT_SECONDS: "5",
   };
   const envFile = path.join(scratch, "local.env");
   writeFileSync(
@@ -145,6 +152,7 @@ try {
       "1",
       "--env-file",
       envFile,
+      ...(kind === "server" ? ["--publish", "127.0.0.1::8080"] : []),
       process.env[`DAL_${kind.toUpperCase()}_IMAGE`] ?? `dal-${kind}:audit-local`,
     ]);
     assert.equal(docker(["exec", name, "id", "-u"]), "10001");
@@ -159,6 +167,7 @@ try {
     const inspection = JSON.parse(docker(["inspect", name]))[0];
     assert(inspection.HostConfig.ReadonlyRootfs);
     assert.equal(inspection.HostConfig.Memory, 512 * 1024 * 1024);
+    let downloadLoad;
     if (kind === "server") {
       let ready = false;
       for (let i = 0; i < 120; i++) {
@@ -189,6 +198,7 @@ try {
         "/usr/local/bin/dal-healthcheck",
       ]);
       checkLocalRestore();
+      downloadLoad = await checkDownloadLoad({ docker, compose, name, scratch, compiler });
     } else {
       await new Promise((resolve) => setTimeout(resolve, 2500));
       assert.equal(
@@ -212,6 +222,7 @@ try {
       uid: 10001,
       readOnly: true,
       idleStats: JSON.parse(stats),
+      ...(downloadLoad ? { downloadLoad } : {}),
       exitCode: stopped.State.ExitCode,
     });
   }

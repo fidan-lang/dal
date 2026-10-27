@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Multipart, Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, Method, StatusCode, header},
     response::IntoResponse,
     routing::{get, post, put},
 };
@@ -65,6 +65,7 @@ async fn download(
     Path((name, version)): Path<(String, String)>,
     peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
+    method: Method,
 ) -> Result<axum::response::Response, DalError> {
     let pkg = queries::packages::get_by_name(&state.db, &name)
         .await?
@@ -74,11 +75,6 @@ async fn download(
         .ok_or_else(|| DalError::VersionNotFound(version.clone(), name.clone()))?;
 
     // Yank affects resolution, not immutable artifact access for existing locks.
-    let url = state
-        .storage
-        .presigned_url(&ver.s3_key, DOWNLOAD_URL_TTL_SECONDS)
-        .await?;
-
     let client_ip = peer.map(|axum::Extension(ConnectInfo(address))| {
         crate::middleware::rate_limit::extract_client_ip(
             &headers,
@@ -104,8 +100,14 @@ async fn download(
         ))
         .await;
 
-    // A signed location is a temporary capability; shared caches must not retain
-    // it or hand an expired URL to a later client.
+    if state.cfg.public_reads.mode == crate::config::DownloadMode::Stream {
+        return stream_download(&state, &ver, &headers, &method).await;
+    }
+    // Explicit legacy mode preserves existing signed-redirect integrations.
+    let url = state
+        .storage
+        .presigned_url(&ver.s3_key, DOWNLOAD_URL_TTL_SECONDS)
+        .await?;
     Ok((
         [
             (header::CACHE_CONTROL, "private, no-store"),
@@ -114,6 +116,79 @@ async fn download(
         axum::response::Redirect::temporary(&url),
     )
         .into_response())
+}
+
+async fn stream_download(
+    state: &AppState,
+    ver: &dal_db::models::PackageVersion,
+    headers: &HeaderMap,
+    method: &Method,
+) -> Result<axum::response::Response, DalError> {
+    use axum::body::Body;
+    let length = u64::try_from(ver.size_bytes)
+        .map_err(|_| DalError::Storage("invalid stored archive length".into()))?;
+    let etag = format!("\"{}\"", ver.checksum);
+    let etag_header = etag
+        .parse()
+        .map_err(|_| DalError::Storage("invalid stored archive checksum".into()))?;
+    let cached = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.split(',').any(|tag| {
+                let tag = tag.trim();
+                tag == "*" || tag == etag || tag.strip_prefix("W/") == Some(etag.as_str())
+            })
+        });
+    let mut response = if cached {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else if *method == Method::HEAD {
+        Body::empty().into_response()
+    } else {
+        let permit = state
+            .download_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| DalError::RateLimited)?;
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(state.cfg.public_reads.download_timeout_seconds);
+        let stream = tokio::time::timeout_at(deadline, state.storage.download(&ver.s3_key))
+            .await
+            .map_err(|_| DalError::Storage("package download timed out".into()))??;
+        crate::middleware::download_body::DownloadBody::wrap(
+            Body::new(stream.into_inner()),
+            permit,
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            length,
+        )
+        .into_response()
+    };
+    let out = response.headers_mut();
+    out.insert(header::ETAG, etag_header);
+    out.insert(
+        header::CACHE_CONTROL,
+        format!(
+            "public,max-age={},immutable",
+            state.cfg.public_reads.archive_cache_seconds
+        )
+        .parse()
+        .expect("integer cache duration"),
+    );
+    out.insert(
+        header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/gzip"),
+    );
+    out.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    if !cached {
+        out.insert(
+            header::CONTENT_LENGTH,
+            length.to_string().parse().expect("integer content length"),
+        );
+    }
+    Ok(response)
 }
 
 /// Publish a new package version.

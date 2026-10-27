@@ -46,6 +46,11 @@ pub fn test_config() -> Config {
         ),
         aws_region: std::env::var("AWS_REGION").unwrap_or_else(|_| "eu-central-1".to_string()),
         max_upload_bytes: 10_485_760,
+        // Keep explicit coverage of the backwards-compatible signed-redirect mode.
+        public_reads: dal_server::config::PublicReadConfig {
+            mode: dal_server::config::DownloadMode::Redirect,
+            ..Default::default()
+        },
         mailjet_api_key: "test_key".to_string(),
         mailjet_secret_key: "test_secret".to_string(),
         mailjet_from_email: "test@dal.test".to_string(),

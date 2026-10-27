@@ -23,9 +23,9 @@ dal-storage.workspace = true
 dal-index.workspace = true
 
 tower.workspace = true
+http-body.workspace = true
 bytes.workspace = true
 governor.workspace = true
-dashmap.workspace = true
 once_cell.workspace = true
 tokio.workspace = true
 axum.workspace = true

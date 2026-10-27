@@ -71,6 +71,18 @@ impl StorageClient {
         Ok(())
     }
 
+    /// Stream a private archive without exposing its object-store capability.
+    pub async fn download(&self, key: &str) -> Result<ByteStream, DalError> {
+        self.inner
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map(|result| result.body)
+            .map_err(|_| DalError::Storage("object download failed".into()))
+    }
+
     /// Generate a presigned download URL (TTL default: 60 seconds).
     pub async fn presigned_url(&self, key: &str, ttl_secs: u64) -> Result<String, DalError> {
         let config = PresigningConfig::expires_in(Duration::from_secs(ttl_secs))

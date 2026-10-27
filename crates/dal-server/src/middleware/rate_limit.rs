@@ -1,7 +1,9 @@
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     num::NonZeroU32,
-    sync::Arc,
+    sync::Mutex,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -10,7 +12,6 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use dashmap::DashMap;
 use governor::{
     Quota, RateLimiter as GovRateLimiter,
     clock::DefaultClock,
@@ -25,37 +26,64 @@ use crate::state::AppState;
 
 type Limiter = GovRateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 
+const MAX_TRACKED_IPS: usize = 10_000;
+const IDLE_RETENTION: Duration = Duration::from_secs(600);
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+
+struct RateLimitState {
+    map: HashMap<IpAddr, (Limiter, Instant)>,
+    next_cleanup: Instant,
+}
+
 /// Per-IP in-memory rate limiter backed by `governor`.
 ///
 /// Default quota: 120 requests / 60 seconds per IP.
 pub struct RateLimiter {
-    map: DashMap<IpAddr, (Arc<Limiter>, std::time::Instant)>,
+    state: Mutex<RateLimitState>,
+    quota: NonZeroU32,
 }
 
 impl RateLimiter {
     pub fn new() -> Self {
+        Self::with_quota(NonZeroU32::new(120).unwrap())
+    }
+
+    pub fn with_quota(quota: NonZeroU32) -> Self {
         Self {
-            map: DashMap::new(),
+            state: Mutex::new(RateLimitState {
+                map: HashMap::new(),
+                next_cleanup: Instant::now() + CLEANUP_INTERVAL,
+            }),
+            quota,
         }
     }
 
     /// Returns `true` if the request should be allowed, `false` if limited.
     pub fn check(&self, ip: IpAddr) -> bool {
-        if self.map.len() >= 10_000 {
-            self.map
-                .retain(|_, (_, seen)| seen.elapsed() < std::time::Duration::from_secs(600));
-            if self.map.len() >= 10_000 && !self.map.contains_key(&ip) {
-                return false;
-            }
+        // ponytail: one short in-memory lock makes admission and the hard cap atomic;
+        // shard it only if measured traffic warrants coordinated shard budgets.
+        let Ok(mut state) = self.state.lock() else {
+            return false; // Poisoned state must fail closed.
+        };
+        let now = Instant::now();
+        if let Some((limiter, seen)) = state.map.get_mut(&ip) {
+            *seen = now;
+            return limiter.check().is_ok();
         }
-        let mut entry = self.map.entry(ip).or_insert_with(|| {
-            let quota = Quota::per_minute(NonZeroU32::new(120).unwrap());
-            (
-                Arc::new(GovRateLimiter::direct(quota)),
-                std::time::Instant::now(),
-            )
-        });
-        entry.1 = std::time::Instant::now();
+        // Never scan the entire table on each rejected new address.
+        if now >= state.next_cleanup {
+            state
+                .map
+                .retain(|_, (_, seen)| now.duration_since(*seen) < IDLE_RETENTION);
+            state.next_cleanup = now + CLEANUP_INTERVAL;
+        }
+        if state.map.len() >= MAX_TRACKED_IPS {
+            return false;
+        }
+        let entry = state
+            .map
+            .entry(ip)
+            .or_insert_with(|| (GovRateLimiter::direct(Quota::per_minute(self.quota)), now));
         entry.0.check().is_ok()
     }
 }
@@ -121,6 +149,58 @@ pub(crate) fn extract_client_ip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn concurrent_new_addresses_never_exceed_the_state_budget() {
+        let limiter = RateLimiter::new();
+        for i in 0..9_999u32 {
+            assert!(limiter.check(std::net::Ipv4Addr::from(i).into()));
+        }
+        let barrier = std::sync::Barrier::new(32);
+        std::thread::scope(|scope| {
+            for i in 10_000..10_032u32 {
+                let limiter = &limiter;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    limiter.check(std::net::Ipv4Addr::from(i).into());
+                });
+            }
+        });
+        assert!(
+            limiter.state.lock().unwrap().map.len() <= MAX_TRACKED_IPS,
+            "concurrent insertion exceeded the IP budget"
+        );
+    }
+
+    #[test]
+    fn shared_nat_uses_one_quota_and_idle_cleanup_is_bounded() {
+        let limiter = RateLimiter::with_quota(NonZeroU32::new(1).unwrap());
+        let nat: IpAddr = "192.0.2.1".parse().unwrap();
+        assert!(limiter.check(nat));
+        for _ in 0..32 {
+            assert!(!limiter.check(nat));
+        }
+        let other: IpAddr = "192.0.2.2".parse().unwrap();
+        assert!(limiter.check(other));
+        {
+            let mut state = limiter.state.lock().unwrap();
+            state.map.get_mut(&other).unwrap().1 =
+                Instant::now() - IDLE_RETENTION - Duration::from_secs(1);
+        }
+        assert!(limiter.check("192.0.2.3".parse().unwrap()));
+        assert!(
+            limiter.state.lock().unwrap().map.contains_key(&other),
+            "do not rescan the table for each new IP"
+        );
+        limiter.state.lock().unwrap().next_cleanup = Instant::now();
+        assert!(limiter.check("192.0.2.4".parse().unwrap()));
+        assert!(!limiter.state.lock().unwrap().map.contains_key(&other));
+        assert!(
+            !limiter.check(nat),
+            "maintenance must not reset an active address quota"
+        );
+    }
+
     #[test]
     fn forwarded_ip_requires_explicit_proxy_trust() {
         let peer: IpAddr = "127.0.0.1".parse().unwrap();

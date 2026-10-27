@@ -88,6 +88,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::index::router())
         .merge(routes::search::router())
         .merge(routes::health::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::public_reads::enforce_public_read_limit,
+        ))
         .with_state(state)
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
         // CORS controls response access; it does not reject CSRF mutations itself.

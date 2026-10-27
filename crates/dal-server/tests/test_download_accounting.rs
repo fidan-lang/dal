@@ -353,3 +353,281 @@ async fn cancellation_drops_accounting_work_and_releases_its_permit() {
         dal_server::state::ACCOUNTING_CONCURRENCY
     );
 }
+
+#[tokio::test]
+async fn stream_download_never_exposes_reusable_storage_credentials() {
+    let mut cfg = common::test_config();
+    cfg.public_reads.mode = dal_server::config::DownloadMode::Stream;
+    let state = AppState::build(&cfg).await.unwrap();
+    let (_, version, uri) = fixture(&state).await;
+    let key = format!("test/stream-contract/{version}.tar.gz");
+    let payload = b"anonymous streamed package";
+    state
+        .storage
+        .upload(&key, payload.to_vec(), "application/gzip")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE package_versions SET s3_key=$2,size_bytes=$3 WHERE id=$1")
+        .bind(version)
+        .bind(&key)
+        .bind(payload.len() as i64)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let router = build_router(state.clone());
+    let response = router
+        .clone()
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(
+        response.headers().get("location").is_none(),
+        "no signed R2 URL may escape the controlled download route"
+    );
+    assert_eq!(response.headers()["content-type"], "application/gzip");
+    assert!(
+        response.headers()["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    let etag = response.headers()["etag"].clone();
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()
+            .as_ref(),
+        payload
+    );
+    let cached = router
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header("if-none-match", etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cached.status(), 304);
+    state.storage.delete(&key).await.unwrap();
+}
+
+#[tokio::test]
+async fn public_read_limits_apply_without_an_account_and_cannot_be_spoofed() {
+    let mut cfg = common::test_config();
+    cfg.public_reads.download_requests_per_minute = 1;
+    cfg.public_reads.metadata_requests_per_minute = 1;
+    let state = AppState::build(&cfg).await.unwrap();
+    let (_, _, uri) = fixture(&state).await;
+    let router = build_router(state);
+    let first = router
+        .clone()
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 307); // Explicit legacy mode remains compatible.
+    let repeated = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("{uri}?cache_bust=untrusted"))
+                .header("x-forwarded-for", "192.0.2.99")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated.status(), 429);
+    assert!(repeated.headers().get("retry-after").is_some());
+    let metadata = "/index/nonexistent-read-limit-probe";
+    let first = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(metadata)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first.status(),
+        404,
+        "metadata and downloads need independent quotas"
+    );
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(metadata)
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        429
+    );
+    assert_ne!(
+        router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        429
+    );
+}
+
+#[tokio::test]
+async fn streaming_holds_global_capacity_until_the_client_finishes_or_disconnects() {
+    let mut cfg = common::test_config();
+    cfg.public_reads.mode = dal_server::config::DownloadMode::Stream;
+    cfg.public_reads.concurrent_downloads = 1;
+    let state = AppState::build(&cfg).await.unwrap();
+    let (_, version, uri) = fixture(&state).await;
+    let key = format!("test/admission/{version}.tar.gz");
+    state
+        .storage
+        .upload(&key, b"x".to_vec(), "application/gzip")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE package_versions SET s3_key=$2 WHERE id=$1")
+        .bind(version)
+        .bind(&key)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let router = build_router(state.clone());
+    let first = router
+        .clone()
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    assert_eq!(state.download_slots.available_permits(), 0);
+    let blocked = router
+        .clone()
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 429);
+    assert!(blocked.headers().get("retry-after").is_some());
+    let head = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("HEAD")
+                .uri(&uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-length"], "1");
+    drop(first);
+    assert_eq!(state.download_slots.available_permits(), 1);
+    let next = router
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(next.status(), 200);
+    assert_eq!(
+        axum::body::to_bytes(next.into_body(), 16)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"x"
+    );
+    state.storage.delete(&key).await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_metadata_is_bounded_without_blocking_health_or_leaking_slots() {
+    let mut cfg = common::test_config();
+    cfg.public_reads.concurrent_metadata_requests = 1;
+    let state = AppState::build(&cfg).await.unwrap();
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let router = axum::Router::new()
+        .route(
+            "/index/slow",
+            axum::routing::get({
+                let started = started.clone();
+                let release = release.clone();
+                move || {
+                    let started = started.clone();
+                    let release = release.clone();
+                    async move {
+                        started.notify_one();
+                        release.notified().await;
+                        "metadata"
+                    }
+                }
+            }),
+        )
+        .route("/health", axum::routing::get(|| async { "healthy" }))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            dal_server::middleware::public_reads::enforce_public_read_limit,
+        ));
+    let first = tokio::spawn(
+        router.clone().oneshot(
+            Request::builder()
+                .uri("/index/slow")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .unwrap();
+    let blocked = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/index/slow?cache_bust=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 429);
+    assert_eq!(blocked.headers()["retry-after"], "1");
+    assert_eq!(blocked.headers()["cache-control"], "no-store");
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    first.abort(); // Cancellation must release metadata admission too.
+    let _ = first.await;
+    release.notify_one();
+    let next = router
+        .oneshot(
+            Request::builder()
+                .uri("/index/slow")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.status(), 200);
+}
