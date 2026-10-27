@@ -150,11 +150,15 @@ async fn stream_download(
             .clone()
             .try_acquire_owned()
             .map_err(|_| DalError::RateLimited)?;
-        let stream = state.storage.download(&ver.s3_key).await?;
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(state.cfg.public_reads.download_timeout_seconds);
+        let stream = tokio::time::timeout_at(deadline, state.storage.download(&ver.s3_key))
+            .await
+            .map_err(|_| DalError::Storage("package download timed out".into()))??;
         crate::middleware::download_body::DownloadBody::wrap(
             Body::new(stream.into_inner()),
             permit,
-            std::time::Duration::from_secs(state.cfg.public_reads.download_timeout_seconds),
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
             length,
         )
         .into_response()

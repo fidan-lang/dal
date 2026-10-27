@@ -432,7 +432,7 @@ async fn public_read_limits_apply_without_an_account_and_cannot_be_spoofed() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&uri)
+                .uri(format!("{uri}?cache_bust=untrusted"))
                 .header("x-forwarded-for", "192.0.2.99")
                 .body(Body::empty())
                 .unwrap(),
@@ -548,4 +548,86 @@ async fn streaming_holds_global_capacity_until_the_client_finishes_or_disconnect
         b"x"
     );
     state.storage.delete(&key).await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_metadata_is_bounded_without_blocking_health_or_leaking_slots() {
+    let mut cfg = common::test_config();
+    cfg.public_reads.concurrent_metadata_requests = 1;
+    let state = AppState::build(&cfg).await.unwrap();
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let router = axum::Router::new()
+        .route(
+            "/index/slow",
+            axum::routing::get({
+                let started = started.clone();
+                let release = release.clone();
+                move || {
+                    let started = started.clone();
+                    let release = release.clone();
+                    async move {
+                        started.notify_one();
+                        release.notified().await;
+                        "metadata"
+                    }
+                }
+            }),
+        )
+        .route("/health", axum::routing::get(|| async { "healthy" }))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            dal_server::middleware::public_reads::enforce_public_read_limit,
+        ));
+    let first = tokio::spawn(
+        router.clone().oneshot(
+            Request::builder()
+                .uri("/index/slow")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .unwrap();
+    let blocked = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/index/slow?cache_bust=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 429);
+    assert_eq!(blocked.headers()["retry-after"], "1");
+    assert_eq!(blocked.headers()["cache-control"], "no-store");
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    first.abort(); // Cancellation must release metadata admission too.
+    let _ = first.await;
+    release.notify_one();
+    let next = router
+        .oneshot(
+            Request::builder()
+                .uri("/index/slow")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.status(), 200);
 }

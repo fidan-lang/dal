@@ -306,7 +306,12 @@ per-IP metadata/download quotas and bounded concurrent metadata requests/downloa
 streams. Download permits are held until EOF, disconnect, failure or deadline;
 stream lengths are checked. Excess requests return 429 with `Retry-After`.
 Tune the documented environment overrides using representative shared-IP CI loads.
-Limits are per process, not a distributed or byte-based quota.
+Limits are per process, not a distributed or byte-based quota. Each limiter has a
+hard 10,000-address state budget; idle-state scans run at most once per minute.
+The download deadline includes storage setup and cancels upstream resources even
+when socket backpressure stops body polling. Disconnects cancel their watchdogs.
+R2 and regional S3 use SigV4; multi-region S3 access-point/SigV4a signing is not
+part of this storage contract.
 
 Successful immutable archives support ETags, HEAD and public caching; errors are
 no-store. Mutable index/authentication responses are not made immutable. The
@@ -326,6 +331,11 @@ python scripts/test-edge-protection.py
 The cache rules ignore irrelevant query strings only for public immutable archives,
 exclude the release manifest, bypass responses without explicit cache headers and
 respect DAL's private/no-store legacy redirects.
+Rules select only anonymous GET/HEAD responses, excluding Authorization and Cookie
+headers; credentials never exempt a request from the separate rate rule. Export
+the current cache entrypoint `result` object and pass `--existing-cache-rules <export.json>` to
+prepare additions idempotently. Matching refs are preserved; conflicting refs stop
+preparation for explicit review. No script in this step applies provider changes.
 Review exact host routing and existing rule ordering before owner-approved changes.
 The currently inspected Free zone already uses its one rate-limit rule; the extra
 hostname-scoped, 60-second rule needs available Pro-or-higher capacity. Do not

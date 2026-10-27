@@ -159,7 +159,7 @@ jobs:
           cd ../..
           docker build --pull --target server -t dal-server:acceptance .
           docker build --pull --target worker -t dal-worker:acceptance .
-          DAL_SERVER_IMAGE=dal-server:acceptance DAL_WORKER_IMAGE=dal-worker:acceptance node scripts/test-images.mjs
+          DAL_SERVER_IMAGE=dal-server:acceptance DAL_WORKER_IMAGE=dal-worker:acceptance node scripts/test-images.mjs --with-cli
           pwsh -NoProfile -File scripts/scan-images.ps1 -ServerImage dal-server:acceptance -WorkerImage dal-worker:acceptance -Syft ./target/audit-tools/syft -Grype ./target/audit-tools/grype
       - name: Linux redacted secret scan and dependency audit evidence
         if: runner.os == 'Linux'

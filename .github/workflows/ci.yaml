@@ -62,6 +62,9 @@ jobs:
         working-directory: frontend
         run: npm run e2e:safety
 
+      - name: Check production cryptography dependency graph
+        run: python3 scripts/test-dependency-security.py
+
       - name: Check public-download edge policy
         run: python3 scripts/test-edge-protection.py
 
