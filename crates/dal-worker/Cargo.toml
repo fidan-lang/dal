@@ -28,5 +28,4 @@ aws-config.workspace = true
 aws-sdk-cognitoidentityprovider.workspace = true
 aws-sdk-sqs.workspace = true
 
-[dev-dependencies]
 sqlx.workspace = true
