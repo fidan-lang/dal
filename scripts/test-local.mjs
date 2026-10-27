@@ -36,6 +36,7 @@ const compose = [
 const children = [];
 const env = {
   ...process.env,
+  DAL_WORKER_HEALTH_FILE: path.join(scratch, "worker-health"),
   AWS_CONFIG_FILE: path.join(scratch, "aws-config"),
   AWS_SHARED_CREDENTIALS_FILE: path.join(scratch, "aws-credentials"),
   AWS_WEB_IDENTITY_TOKEN_FILE: "",

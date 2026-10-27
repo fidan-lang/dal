@@ -41,6 +41,7 @@ pub async fn run(
             }
         };
 
+        record_progress(&db).await;
         let messages = resp.messages();
         if messages.is_empty() {
             continue;
@@ -112,7 +113,21 @@ async fn dispatch_with_lease(
             _ = interval.tick() => {
                 sqs.change_message_visibility().queue_url(queue).receipt_handle(receipt)
                     .visibility_timeout(120).send().await.map_err(|_|anyhow::anyhow!("queue lease renewal failed"))?;
+                record_progress(db).await;
             }
         }
+    }
+}
+
+async fn record_progress(db: &PgPool) {
+    if matches!(
+        tokio::time::timeout(Duration::from_secs(3), sqlx::query("SELECT 1").execute(db)).await,
+        Ok(Ok(_))
+    ) {
+        if crate::health::record().is_err() {
+            warn!("worker progress record could not be written");
+        }
+    } else {
+        warn!("worker database health probe failed");
     }
 }

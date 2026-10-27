@@ -200,11 +200,21 @@ try {
       checkLocalRestore();
       downloadLoad = await checkDownloadLoad({ docker, compose, name, scratch, compiler });
     } else {
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-      assert.equal(
-        JSON.parse(docker(["inspect", name]))[0].State.Running,
-        true,
-      );
+      const health = () => spawnSync("docker", ["exec", name, "/usr/local/bin/dal-worker", "--healthcheck"],
+        { encoding: "utf8", windowsHide: true, timeout: 5000 });
+      let healthy = false;
+      for (let i = 0; i < 120; i++) {
+        if (health().status === 0) { healthy = true; break; }
+        assert.equal(JSON.parse(docker(["inspect", name]))[0].State.Running, true);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      assert(healthy, "worker must make successful queue and database progress");
+      // An alternate stale record must fail even while the real process is alive.
+      docker(["exec", name, "sh", "-c", "printf 1 > /tmp/stale-worker-health"]);
+      assert.notEqual(spawnSync("docker", ["exec", "--env", "DAL_WORKER_HEALTH_FILE=/tmp/stale-worker-health",
+        name, "/usr/local/bin/dal-worker", "--healthcheck"], { windowsHide: true }).status, 0);
+      docker(["exec", name, "rm", "/tmp/stale-worker-health"]);
+      assert.equal(health().status, 0, "negative probe must not corrupt real worker progress");
     }
     const stats = docker([
       "stats",
@@ -231,7 +241,7 @@ try {
     JSON.stringify(summary, null, 2),
   );
   console.log(
-    "Both local images: non-root, read-only, bounded memory, API health/readiness, worker start and graceful shutdown passed.",
+    "Both local images: non-root, read-only, bounded memory, API health/readiness, worker progress health and graceful shutdown passed.",
   );
 } finally {
   for (const name of owned) docker(["rm", "-f", name], [0, 1]);
