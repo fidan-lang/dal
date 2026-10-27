@@ -1,0 +1,9 @@
+{
+  "mode": "stream",
+  "metadata_requests_per_minute": 600,
+  "download_requests_per_minute": 120,
+  "concurrent_downloads": 16,
+  "download_timeout_seconds": 120,
+  "archive_cache_seconds": 31536000,
+  "concurrent_metadata_requests": 32
+}

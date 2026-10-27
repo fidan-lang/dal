@@ -1,3 +1,4 @@
+pub use crate::middleware::public_reads::{DownloadMode, PublicReadConfig};
 use anyhow::Context;
 
 pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8080";
@@ -20,6 +21,7 @@ pub struct Config {
     pub cognito_endpoint_url: Option<String>,
     pub aws_region: String,
     pub max_upload_bytes: u64,
+    pub public_reads: PublicReadConfig,
     pub mailjet_api_key: String,
     pub mailjet_secret_key: String,
     pub mailjet_from_email: String,
@@ -29,6 +31,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
+            public_reads: PublicReadConfig::from_env()?,
             database_url: env("DATABASE_URL")?,
             trusted_proxies: std::env::var("DAL_TRUSTED_PROXIES")
                 .unwrap_or_default()

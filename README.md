@@ -296,3 +296,46 @@ See [private image release requirements](CONTRIBUTING.md#private-image-release-r
 Production DAL must be approved and operational after Fidan 1.1.0 stable and its
 protocol-8 LLVM helper are released, and **before** the first args 0.1.0 publication.
 No production launch or package/image publication follows automatically from CI.
+
+## Public download protection
+
+Public package installation remains anonymous. The default `stream` mode serves
+archives from private storage through the API rather than exposing reusable R2
+signed URLs. `config/public-read-policy.json` owns provisional defaults: separate
+per-IP metadata/download quotas and bounded concurrent metadata requests/download
+streams. Download permits are held until EOF, disconnect, failure or deadline;
+stream lengths are checked. Excess requests return 429 with `Retry-After`.
+Tune the documented environment overrides using representative shared-IP CI loads.
+Limits are per process, not a distributed or byte-based quota.
+
+Successful immutable archives support ETags, HEAD and public caching; errors are
+no-store. Mutable index/authentication responses are not made immutable. The
+explicit `DAL_DOWNLOAD_MODE=redirect` compatibility mode preserves old clients
+that need signed redirects, but those URLs remain replayable until expiry; the
+production Compose definition forces `stream`. Existing issued URLs are not
+revoked. No account is required to download, and package license rights remain
+unchanged. HTTP download counters describe origin requests, not cache-hit counts.
+
+Prepare (without applying) scoped Cloudflare cache/rate rules:
+
+```sh
+python scripts/prepare-edge-protection.py --registry-host api.dal.fidan.dev --output target/edge-protection.json
+python scripts/test-edge-protection.py
+```
+
+The cache rules ignore irrelevant query strings only for public immutable archives,
+exclude the release manifest, bypass responses without explicit cache headers and
+respect DAL's private/no-store legacy redirects.
+Review exact host routing and existing rule ordering before owner-approved changes.
+The currently inspected Free zone already uses its one rate-limit rule; the extra
+hostname-scoped, 60-second rule needs available Pro-or-higher capacity. Do not
+replace the leaked-credential rule or upgrade a paid plan automatically. Cache
+rules do not by themselves stop bulk downloading; edge quotas and cache behavior
+still need provider validation. Keep R2 public endpoints disabled for packages.
+
+The API container binds only loopback in the production Compose example. Before
+launch, restrict the actual host proxy to the approved Cloudflare path/tunnel and
+verify direct-origin denial. Only that verified proxy may supply an overwritten,
+single client-IP header through `DAL_TRUSTED_PROXIES`. Confirm caches, 429/retry,
+shared-IP installs and security monitoring on the real topology before production.
+These source changes do not deploy DAL, publish images, or apply Cloudflare rules.

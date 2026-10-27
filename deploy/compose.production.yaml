@@ -6,6 +6,8 @@ services:
     env_file: ${DAL_ENV_FILE:?path to protected production environment required}
     environment:
       DAL_LISTEN_ADDR: 0.0.0.0:8080
+      # Production must not expose reusable signed object-store download URLs.
+      DAL_DOWNLOAD_MODE: stream
     ports: ["127.0.0.1:8080:8080"]
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]

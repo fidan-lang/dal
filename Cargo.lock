@@ -1093,6 +1093,7 @@ dependencies = [
  "flate2",
  "governor",
  "hex",
+ "http-body",
  "jsonwebtoken",
  "once_cell",
  "reqwest",

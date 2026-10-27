@@ -30,12 +30,18 @@ type Limiter = GovRateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddlew
 /// Default quota: 120 requests / 60 seconds per IP.
 pub struct RateLimiter {
     map: DashMap<IpAddr, (Arc<Limiter>, std::time::Instant)>,
+    quota: NonZeroU32,
 }
 
 impl RateLimiter {
     pub fn new() -> Self {
+        Self::with_quota(NonZeroU32::new(120).unwrap())
+    }
+
+    pub fn with_quota(quota: NonZeroU32) -> Self {
         Self {
             map: DashMap::new(),
+            quota,
         }
     }
 
@@ -49,7 +55,7 @@ impl RateLimiter {
             }
         }
         let mut entry = self.map.entry(ip).or_insert_with(|| {
-            let quota = Quota::per_minute(NonZeroU32::new(120).unwrap());
+            let quota = Quota::per_minute(self.quota);
             (
                 Arc::new(GovRateLimiter::direct(quota)),
                 std::time::Instant::now(),
