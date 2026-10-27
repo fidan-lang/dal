@@ -119,15 +119,16 @@ pub async fn enforce_auth_rate_limit(
 }
 
 fn is_rate_limited_auth_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/auth/register"
-            | "/auth/resend-verification"
-            | "/auth/login"
-            | "/auth/refresh"
-            | "/auth/forgot-password"
-            | "/auth/reset-password"
-    )
+    path.starts_with("/auth/mfa/")
+        || matches!(
+            path,
+            "/auth/register"
+                | "/auth/resend-verification"
+                | "/auth/login"
+                | "/auth/refresh"
+                | "/auth/forgot-password"
+                | "/auth/reset-password"
+        )
 }
 
 pub(crate) fn extract_client_ip(

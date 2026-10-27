@@ -1,8 +1,11 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
-    import { auth, DalApiError } from "$lib/api";
+    import { auth, mfa } from "$lib/api";
     import { currentUser } from "$lib/stores/auth";
 
+    let challenge = $state(false);
+    let code = $state("");
+    let expiresAt = $state(0);
     let username = $state("");
     let password = $state("");
     let error = $state("");
@@ -55,12 +58,25 @@
         resendMessage = "";
         loading = true;
         try {
-            const user = await auth.login(fetch, username, password);
+            if (challenge && Date.now() >= expiresAt) {
+                challenge = false;
+                throw new Error("Authentication expired. Sign in again.");
+            }
+            const user = challenge
+                ? await mfa.challenge(fetch, code)
+                : await auth.login(fetch, username, password);
+            code = "";
+            if ("mfa_required" in user) {
+                password = "";
+                challenge = true;
+                expiresAt = Date.now() + user.expires_in * 1000;
+                return;
+            }
             currentUser.set(user);
             goto("/dashboard");
         } catch (err) {
             error =
-                err instanceof DalApiError
+                err instanceof Error
                     ? err.message
                     : "Login failed. Please try again.";
             showResend = error.toLowerCase().includes("verify your email");
@@ -119,40 +135,72 @@
                 {/if}
             {/if}
 
-            <div>
-                <label
-                    for="username"
-                    class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                    >Username</label
-                >
+            {#if !challenge}
+                <div>
+                    <label
+                        for="username"
+                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+                        >Username</label
+                    >
+                    <input
+                        id="username"
+                        type="text"
+                        bind:value={username}
+                        required
+                        autocomplete="username"
+                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+                        placeholder="your-username"
+                    />
+                </div>
+
+                <div>
+                    <label
+                        for="password"
+                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+                        >Password</label
+                    >
+                    <input
+                        id="password"
+                        type="password"
+                        bind:value={password}
+                        required
+                        autocomplete="current-password"
+                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+                        placeholder="••••••••"
+                    />
+                </div>
+            {:else}
+                <label for="totp">Authenticator code</label>
                 <input
-                    id="username"
+                    id="totp"
                     type="text"
-                    bind:value={username}
+                    bind:value={code}
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    pattern={"[0-9]{6}"}
+                    maxlength="6"
                     required
-                    autocomplete="username"
-                    class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                    placeholder="your-username"
+                    class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
                 />
-            </div>
-
-            <div>
-                <label
-                    for="password"
-                    class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                    >Password</label
+                <p class="text-sm">
+                    Enter the six-digit code from your authenticator. This
+                    sign-in expires after three minutes and allows five
+                    attempts.
+                </p>
+                <button
+                    type="button"
+                    onclick={() => {
+                        challenge = false;
+                        code = "";
+                        error = "";
+                    }}>Start sign-in again</button
                 >
-                <input
-                    id="password"
-                    type="password"
-                    bind:value={password}
-                    required
-                    autocomplete="current-password"
-                    class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                    placeholder="••••••••"
-                />
-            </div>
-
+                <p class="text-sm">
+                    Lost access? Restore your authenticator backup or contact
+                    the registry operator. Email and password resets cannot
+                    remove MFA.
+                </p>
+            {/if}
             <div class="flex justify-end">
                 <a
                     href="/forgot-password"

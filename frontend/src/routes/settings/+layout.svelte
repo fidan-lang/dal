@@ -5,6 +5,7 @@
     const navLinks = [
         { label: "Profile", href: "/settings" },
         { label: "API Tokens", href: "/settings/tokens" },
+        { label: "Account security", href: "/settings/security" },
     ];
 </script>
 

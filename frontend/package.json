@@ -2,7 +2,7 @@
   "name": "dal-frontend",
   "version": "1.0.0",
   "author": {
-    "name": "Kaan Gönüldinc",
+    "name": "Kaan G\u00f6n\u00fcldinc",
     "email": "contact@appsolves.dev",
     "url": "https://appsolves.dev"
   },
@@ -16,7 +16,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "prebuild": "npm run sync-legal",
-    "sync-legal": "node -e \"const fs=require('fs'); for (const name of ['LICENSE','NOTICE']) fs.copyFileSync('../'+name, 'static/'+name+'.txt');\"",
+    "sync-legal": "node -e \"const fs=require('fs'); for (const name of ['LICENSE','NOTICE']) fs.copyFileSync('../'+name, 'static/'+name+'.txt');\" && node -e \"require('fs').copyFileSync('node_modules/qrcode/license','static/qrcode-LICENSE.txt')\"",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -36,6 +36,7 @@
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^25.5.0",
+    "@types/qrcode": "1.5.6",
     "@types/sanitize-html": "^2.16.2",
     "autoprefixer": "^10.4.19",
     "eslint": "^10.0.3",
@@ -51,6 +52,7 @@
   },
   "dependencies": {
     "marked": "^17.0.4",
+    "qrcode": "1.5.4",
     "sanitize-html": "^2.18.1"
   },
   "overrides": {

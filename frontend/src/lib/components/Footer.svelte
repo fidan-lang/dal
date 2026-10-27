@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { currentUser } from "$lib/stores/auth";
+    import { currentUser } from "$lib/stores/auth";
 </script>
 
 <footer
@@ -125,19 +125,22 @@
                 &copy; {new Date().getFullYear()} Dal / Fidan. All rights reserved.
             </p>
             <p class="mt-2.5">
-                Fidan and DAL identify the official projects; see the separate branding guidance.
+                Fidan and DAL identify the official projects; see the separate
+                branding guidance.
             </p>
             <nav
                 aria-label="Legal"
                 class="mt-2.5 flex flex-wrap justify-center gap-x-4 gap-y-2"
             >
-                <a
-                    href="/LICENSE.txt"
-                    class="hover:text-[var(--color-text)]">Apache 2.0</a
+                <a href="/LICENSE.txt" class="hover:text-[var(--color-text)]"
+                    >Apache 2.0</a
+                >
+                <a href="/NOTICE.txt" class="hover:text-[var(--color-text)]"
+                    >Attribution</a
                 >
                 <a
-                    href="/NOTICE.txt"
-                    class="hover:text-[var(--color-text)]">Attribution</a
+                    href="/qrcode-LICENSE.txt"
+                    class="hover:text-[var(--color-text)]">QR code license</a
                 >
                 <a
                     href="https://github.com/fidan-lang/dal/blob/main/TRADEMARKS.md"
@@ -145,7 +148,8 @@
                 >
                 <a
                     href="https://github.com/fidan-lang/dal/blob/main/REGISTRY_TERMS.md"
-                    class="hover:text-[var(--color-text)]">Registry terms (draft)</a
+                    class="hover:text-[var(--color-text)]"
+                    >Registry terms (draft)</a
                 >
             </nav>
         </div>

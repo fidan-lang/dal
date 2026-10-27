@@ -15,6 +15,7 @@ use tower::ServiceExt;
 
 pub fn test_config() -> Config {
     let cfg = Config {
+        totp_enabled: true,
         database_url: std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://dal_test:test@localhost:5433/dal_test".to_string()),
         trusted_proxies: Vec::new(),
@@ -206,6 +207,17 @@ impl TestApp {
     }
 
     // ── Request helpers ───────────────────────────────────────────────────────
+
+    pub async fn existing_interactive_token(&self, username: &str) -> String {
+        self.cognito
+            .sign_in(username, "LocalFixturePass123!")
+            .await
+            .unwrap()
+            .1
+    }
+    pub async fn raw_request(&self, request: Request<Body>) -> Response<Body> {
+        self.router.clone().oneshot(request).await.unwrap()
+    }
 
     pub async fn get(&self, uri: &str) -> Response<Body> {
         self.router

@@ -3,6 +3,7 @@
 pub mod app;
 pub mod config;
 pub mod extractors;
+pub mod mfa;
 pub mod middleware;
 pub mod responses;
 pub mod routes;

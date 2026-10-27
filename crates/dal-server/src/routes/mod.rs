@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod health;
 pub mod index;
+pub mod mfa;
 pub mod owners;
 pub mod packages;
 pub mod search;

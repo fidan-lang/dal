@@ -700,6 +700,7 @@ test("footer links software, branding and draft service policies separately", as
   for (const [name, url] of [
     ["Apache 2.0", "/LICENSE.txt"],
     ["Attribution", "/NOTICE.txt"],
+    ["QR code license", "/qrcode-LICENSE.txt"],
     ["Trademarks", "https://github.com/fidan-lang/dal/blob/main/TRADEMARKS.md"],
     [
       "Registry terms (draft)",
@@ -717,4 +718,108 @@ test("footer links software, branding and draft service policies separately", as
       readFileSync(path.resolve(__dirname, "../..", name)),
     );
   }
+});
+
+test("MFA login waits for the authenticator and never refresh-retries a code", async ({
+  page,
+}) => {
+  let completions = 0;
+  let refreshes = 0;
+  await page.route(`${apiBaseUrl}/auth/login`, (route) =>
+    route.fulfill({ json: { mfa_required: true, expires_in: 180 } }),
+  );
+  await page.route(`${apiBaseUrl}/auth/refresh`, (route) => {
+    refreshes++;
+    return route.fulfill({
+      status: 401,
+      json: { message: "not authenticated" },
+    });
+  });
+  await page.route(`${apiBaseUrl}/auth/mfa/challenge`, (route) => {
+    completions++;
+    expect(route.request().postDataJSON()).toEqual({ code: "000000" });
+    return route.fulfill({
+      status: 401,
+      json: {
+        error: { code: "UNAUTHORIZED", message: "Invalid authenticator code" },
+      },
+    });
+  });
+  await page.goto("/login");
+  await page.getByLabel("Username").fill("mfa-fixture");
+  await page.getByLabel("Password", { exact: true }).fill("FixturePass123!");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByLabel("Authenticator code", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+  await expect(page).toHaveURL(/\/login$/);
+  expect(
+    (await page.context().cookies()).some((cookie) =>
+      ["dal_access_token", "dal_refresh_token"].includes(cookie.name),
+    ),
+  ).toBe(false);
+  await expect(
+    page.getByLabel("Authenticator code", { exact: true }),
+  ).toHaveAttribute("pattern", "[0-9]{6}");
+  await page.getByLabel("Authenticator code", { exact: true }).fill("000000");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByText("Invalid authenticator code", { exact: true }),
+  ).toBeVisible();
+  expect(completions).toBe(1);
+  expect(refreshes).toBe(0);
+  await page.getByRole("button", { name: "Start sign-in again" }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
+});
+
+test("account security renders a local QR/manual secret and requires fresh credentials", async ({
+  page,
+  request,
+}) => {
+  const username = `pw-mfa-${Date.now().toString(36)}`;
+  const password = "MfaFixturePass123!";
+  await registerViaUi(page, username, `${username}@example.test`, password);
+  const token = await waitForMailToken(request, "verify-email", username);
+  await page.goto(`/verify-email?token=${token}`);
+  await expect(
+    page.getByRole("heading", { name: "Email verified!" }),
+  ).toBeVisible();
+  await loginViaUi(page, username, password);
+  await page.route(`${apiBaseUrl}/auth/mfa/status`, (route) =>
+    route.fulfill({
+      json: { enabled: false, available: true, expires_in: 180 },
+    }),
+  );
+  await page.route(`${apiBaseUrl}/auth/mfa/setup`, (route) => {
+    expect(route.request().postDataJSON()).toEqual({ password });
+    return route.fulfill({
+      json: {
+        secret: "JBSWY3DPEHPK3PXP",
+        uri: `otpauth://totp/DAL:${username}?secret=JBSWY3DPEHPK3PXP&issuer=DAL`,
+        expires_in: 180,
+      },
+    });
+  });
+  await page.goto("/settings/security");
+  await page.getByLabel("Current password", { exact: true }).fill(password);
+  await page
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  await expect(
+    page.getByText("JBSWY3DPEHPK3PXP", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByAltText("Scan to add your DAL authenticator"),
+  ).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await expect(
+    page.getByLabel("Code from the new authenticator"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Hide setup secret" }).click();
+  await expect(page.getByText("JBSWY3DPEHPK3PXP", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByLabel("Current password", { exact: true }),
+  ).toHaveValue("");
 });

@@ -44,10 +44,12 @@ fn allowed_origins() -> Vec<HeaderValue> {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    let auth_router = routes::auth::router().route_layer(middleware::from_fn_with_state(
-        state.clone(),
-        crate::middleware::rate_limit::enforce_auth_rate_limit,
-    ));
+    let auth_router = routes::auth::router()
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::rate_limit::enforce_auth_rate_limit,
+        ))
+        .layer(middleware::map_response(routes::mfa::no_store));
 
     let origins = allowed_origins();
     let mutation_origins = origins.clone();

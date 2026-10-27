@@ -17,6 +17,7 @@ pub const ACCOUNTING_TIMEOUT: std::time::Duration = std::time::Duration::from_mi
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub mfa: Arc<crate::mfa::PendingMfa>,
     pub storage: Arc<StorageClient>,
     pub cognito: Arc<CognitoClient>,
     pub jwt: Arc<JwtValidator>,
@@ -112,6 +113,7 @@ impl AppState {
         let rate = RateLimiter::new();
 
         Ok(Self {
+            mfa: Arc::new(crate::mfa::PendingMfa::default()),
             db,
             storage: Arc::new(storage),
             cognito: Arc::new(cognito),

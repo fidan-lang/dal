@@ -4,3 +4,5 @@ pub mod packages;
 pub mod tokens;
 pub mod users;
 pub mod versions;
+
+pub mod mfa_sessions;
