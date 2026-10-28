@@ -9,6 +9,7 @@ pub struct Config {
     pub listen_addr: String,
     pub trusted_proxies: Vec<std::net::IpAddr>,
     pub base_url: String,
+    pub totp_enabled: bool,
     pub storage_bucket: String,
     pub storage_endpoint_url: Option<String>,
     pub storage_access_key_id: Option<String>,
@@ -43,6 +44,9 @@ impl Config {
                 .context("invalid DAL_TRUSTED_PROXIES IP")?,
             listen_addr: env_or("DAL_LISTEN_ADDR", DEFAULT_LISTEN_ADDR),
             base_url: env_or("DAL_BASE_URL", "http://localhost:8080"),
+            totp_enabled: env_or("DAL_TOTP_ENABLED", "false")
+                .parse()
+                .context("DAL_TOTP_ENABLED must be true or false")?,
             storage_bucket: env_with_fallback("DAL_STORAGE_BUCKET", "DAL_S3_BUCKET")?,
             storage_endpoint_url: env_optional_with_fallback(
                 "DAL_STORAGE_ENDPOINT_URL",

@@ -214,7 +214,8 @@ function shouldAttemptRefresh(
   status: number,
   allowRefresh: boolean,
 ): boolean {
-  if (!allowRefresh || status !== 401) return false;
+  if (!allowRefresh || status !== 401 || path.startsWith("/auth/mfa/"))
+    return false;
 
   return ![
     "/auth/login",
@@ -470,12 +471,18 @@ export const auth = {
       username,
     }),
 
-  login: async (f: FetchFn, username: string, password: string) => {
+  login: async (
+    f: FetchFn,
+    username: string,
+    password: string,
+  ): Promise<User | { mfa_required: true; expires_in: number }> => {
     const response = await request<unknown>(f, "POST", "/auth/login", {
       username,
       password,
     });
     const payload = asObject(response);
+    if (payload.mfa_required === true)
+      return { mfa_required: true, expires_in: asNumber(payload.expires_in) };
 
     if (payload.username) {
       return normalizeUser(payload);
@@ -678,4 +685,31 @@ export const admin = {
       "DELETE",
       `/admin/packages/${encodeURIComponent(name)}`,
     ),
+};
+
+export const mfa = {
+  status: (f: FetchFn) =>
+    request<{ enabled: boolean; available: boolean; expires_in: number }>(
+      f,
+      "GET",
+      "/auth/mfa/status",
+    ),
+  challenge: async (f: FetchFn, code: string) =>
+    normalizeUser(
+      await request<unknown>(f, "POST", "/auth/mfa/challenge", { code }),
+    ),
+  setup: (f: FetchFn, password: string, current_code?: string) =>
+    request<{ secret: string; uri: string; expires_in: number }>(
+      f,
+      "POST",
+      "/auth/mfa/setup",
+      { password, current_code },
+    ),
+  verify: (f: FetchFn, code: string) =>
+    request<{ message: string }>(f, "POST", "/auth/mfa/verify", { code }),
+  disable: (f: FetchFn, password: string, current_code: string) =>
+    request<{ message: string }>(f, "POST", "/auth/mfa/disable", {
+      password,
+      current_code,
+    }),
 };

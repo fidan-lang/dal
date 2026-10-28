@@ -16,13 +16,14 @@ use dal_common::error::DalError;
 use dal_db::queries;
 
 use crate::{
-    extractors::{AuthUser, VerifiedSession, authenticated_session},
+    extractors::{AuthUser, VerifiedSession},
     responses::CurrentUserResponse,
     state::AppState,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(super::mfa::router())
         .route("/auth/register", post(register))
         .route("/auth/resend-verification", post(resend_verification))
         .route("/auth/login", post(login))
@@ -32,12 +33,13 @@ pub fn router() -> Router<AppState> {
         .route("/auth/forgot-password", post(forgot_password))
         .route("/auth/reset-password", post(reset_password))
         .route("/auth/me", get(me))
+        .layer(axum::middleware::map_response(super::mfa::no_store))
 }
 
 const ACCESS_COOKIE_NAME: &str = "dal_access_token";
 const REFRESH_COOKIE_NAME: &str = "dal_refresh_token";
 
-fn cookie_attrs(path: &str, max_age: i64, base_url: &str) -> String {
+pub(super) fn cookie_attrs(path: &str, max_age: i64, base_url: &str) -> String {
     let secure = if base_url.trim().starts_with("https://") {
         "; Secure"
     } else {
@@ -284,12 +286,60 @@ async fn login(
         }
     }
 
-    let (_access, id_token, refresh) = state.cognito.sign_in(&username, &body.password).await?;
-    // A concurrent revocation must never receive a success-shaped cookie response.
-    let db_user = authenticated_session(&state, &id_token).await?;
+    match state
+        .cognito
+        .begin_sign_in(&username, &body.password)
+        .await?
+    {
+        dal_auth::cognito::Authentication::Complete(tokens) => {
+            finish_login(&state, tokens, db_user.id, false).await
+        }
+        dal_auth::cognito::Authentication::Totp { username, session } => {
+            let handle = state.mfa.insert(
+                crate::mfa::Pending::new(
+                    db_user.id,
+                    crate::mfa::PendingKind::Login { username, session },
+                )
+                .at_epoch(db_user.session_invalid_before),
+            )?;
+            Ok((
+                super::mfa::pending_headers(
+                    crate::mfa::PENDING_COOKIE,
+                    &handle,
+                    &state.cfg.base_url,
+                )?,
+                Json(
+                    json!({ "mfa_required": true, "expires_in": crate::mfa::PENDING_TTL.as_secs() }),
+                ),
+            ))
+        }
+    }
+}
 
-    let mut headers = HeaderMap::new();
-    headers.insert(
+pub(super) async fn finish_login(
+    state: &AppState,
+    tokens: dal_auth::cognito::AuthTokens,
+    expected_user: Uuid,
+    mfa_completed: bool,
+) -> Result<(HeaderMap, Json<Value>), DalError> {
+    let (db_user, _) = crate::extractors::validated_identity(state, &tokens.id).await?;
+    if db_user.id != expected_user || !db_user.email_verified {
+        return Err(DalError::Unauthorized);
+    }
+    if !mfa_completed
+        && (queries::users::mfa_required(&state.db, db_user.id).await?
+            || state.cognito.totp_enabled(&db_user.username).await?)
+    {
+        return Err(DalError::Unauthorized);
+    }
+    if mfa_completed {
+        crate::extractors::bind_mfa_session(state, &tokens.id, &tokens.refresh, false).await?;
+    }
+    let id_token = tokens.id;
+    let refresh = tokens.refresh;
+    let mut headers =
+        super::mfa::pending_headers(crate::mfa::PENDING_COOKIE, "", &state.cfg.base_url)?;
+    headers.append(
         header::SET_COOKIE,
         format!(
             "{REFRESH_COOKIE_NAME}={}",
@@ -330,6 +380,7 @@ async fn logout(
     State(state): State<AppState>,
     VerifiedSession(user): VerifiedSession,
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
+    state.mfa.revoke(user.id);
     revoke_global_session(&state.cognito, &user.username).await?;
     // Include tokens issued while the provider request was in flight. The
     // cutoff is monotonic; whole-second iat equality deliberately fails closed.
@@ -390,7 +441,10 @@ async fn refresh(
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
     let refresh_token = resolve_refresh_token(&headers, &body)?;
     let (_access, id) = state.cognito.refresh(&refresh_token).await?;
-    authenticated_session(&state, &id).await?;
+    let (user, _) = crate::extractors::validated_identity(&state, &id).await?;
+    if queries::users::mfa_required(&state.db, user.id).await? {
+        crate::extractors::bind_mfa_session(&state, &id, &refresh_token, true).await?;
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert(

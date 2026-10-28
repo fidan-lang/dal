@@ -349,3 +349,5 @@ verify direct-origin denial. Only that verified proxy may supply an overwritten,
 single client-IP header through `DAL_TRUSTED_PROXIES`. Confirm caches, 429/retry,
 shared-IP installs and security monitoring on the real topology before production.
 These source changes do not deploy DAL, publish images, or apply Cloudflare rules.
+
+Optional user-controlled authenticator MFA, its API contract and the pending Cognito rollout/recovery procedure are described in [deploy/optional-totp.md](deploy/optional-totp.md). Enabling it requires a separately approved OPTIONAL Cognito configuration; normal package installation stays anonymous.

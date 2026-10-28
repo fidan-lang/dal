@@ -126,6 +126,21 @@ impl FromRequestParts<AppState> for AuthActor {
 
 /// One JWT session contract for authorization, login and refresh responses.
 pub(crate) async fn authenticated_session(state: &AppState, token: &str) -> Result<User, DalError> {
+    let (user, _) = validated_identity(state, token).await?;
+    if queries::users::mfa_required(&state.db, user.id).await?
+        && !queries::mfa_sessions::authorized(&state.db, user.id, &dal_auth::hash_token(token))
+            .await?
+    {
+        return Err(DalError::Unauthorized);
+    }
+    Ok(user)
+}
+
+/// Used only after fresh Cognito authentication or while binding a refresh to its MFA grant.
+pub(crate) async fn validated_identity(
+    state: &AppState,
+    token: &str,
+) -> Result<(User, Claims), DalError> {
     let claims: Claims = state.jwt.validate(token).await?;
     let user = queries::users::get_by_cognito_sub(&state.db, &claims.sub)
         .await?
@@ -133,12 +148,12 @@ pub(crate) async fn authenticated_session(state: &AppState, token: &str) -> Resu
     if session_was_revoked(claims.iat, claims.auth_time, user.session_invalid_before) {
         return Err(DalError::Unauthorized);
     }
-    Ok(user)
+    Ok((user, claims))
 }
 
 /// Cognito timestamps have whole-second resolution. Revoke the entire cutoff
 /// second, including refreshed tokens from an earlier authentication epoch.
-fn session_was_revoked(
+pub(crate) fn session_was_revoked(
     issued_at_seconds: i64,
     authenticated_at_seconds: Option<i64>,
     invalid_before: Option<chrono::DateTime<chrono::Utc>>,
@@ -193,6 +208,38 @@ fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
             None
         }
     })
+}
+
+/// The user row lock orders grants against global revocation. A raw Cognito JWT
+/// cannot stand in for DAL's completed MFA flow, even during a provider downgrade.
+pub(crate) async fn bind_mfa_session(
+    state: &AppState,
+    token: &str,
+    refresh: &str,
+    is_refresh: bool,
+) -> Result<User, DalError> {
+    let (user, claims) = validated_identity(state, token).await?;
+    let mut tx = state.db.begin().await?;
+    let user = queries::users::lock_session(&mut tx, user.id).await?;
+    if !user.email_verified
+        || user.cognito_sub != claims.sub
+        || session_was_revoked(claims.iat, claims.auth_time, user.session_invalid_before)
+    {
+        return Err(DalError::Unauthorized);
+    }
+    let refresh_hash = dal_auth::hash_token(refresh);
+    if is_refresh {
+        if !queries::mfa_sessions::valid_refresh(&mut tx, user.id, &refresh_hash).await? {
+            return Err(DalError::Unauthorized);
+        }
+    } else {
+        queries::mfa_sessions::create(&mut tx, user.id, &refresh_hash).await?;
+    }
+    let expiry = chrono::DateTime::from_timestamp(claims.exp, 0).ok_or(DalError::Unauthorized)?;
+    queries::mfa_sessions::bind_token(&mut tx, &refresh_hash, &dal_auth::hash_token(token), expiry)
+        .await?;
+    tx.commit().await?;
+    Ok(user)
 }
 
 #[cfg(test)]

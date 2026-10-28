@@ -125,13 +125,14 @@ pub async fn advance_session_invalid_before(
     invalid_before: chrono::DateTime<chrono::Utc>,
 ) -> DalResult<()> {
     sqlx::query(
-        "UPDATE users
+        "WITH revoked AS (UPDATE users
          SET session_invalid_before = CASE
                  WHEN session_invalid_before IS NULL OR session_invalid_before < $2 THEN $2
                  ELSE session_invalid_before
              END,
              updated_at = now()
-         WHERE id = $1",
+         WHERE id = $1 RETURNING id)
+         DELETE FROM mfa_sessions WHERE user_id IN (SELECT id FROM revoked)",
     )
     .bind(user_id)
     .bind(invalid_before)
@@ -238,4 +239,46 @@ pub async fn consume_verification_token(
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|(id,)| id))
+}
+
+/// Fail closed if a previously enrolled account unexpectedly receives password-only tokens.
+pub async fn mfa_required(pool: &PgPool, user_id: Uuid) -> DalResult<bool> {
+    Ok(
+        sqlx::query_scalar::<_, bool>("SELECT required FROM user_mfa WHERE user_id=$1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
+}
+pub async fn lock_mfa(connection: &mut sqlx::PgConnection, user_id: Uuid) -> DalResult<bool> {
+    sqlx::query("INSERT INTO user_mfa(user_id) VALUES($1) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .execute(&mut *connection)
+        .await?;
+    Ok(
+        sqlx::query_scalar("SELECT required FROM user_mfa WHERE user_id=$1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_one(connection)
+            .await?,
+    )
+}
+pub async fn set_mfa_required(
+    connection: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    required: bool,
+) -> DalResult<()> {
+    sqlx::query("UPDATE user_mfa SET required=$2 WHERE user_id=$1")
+        .bind(user_id)
+        .bind(required)
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+pub async fn lock_session(connection: &mut sqlx::PgConnection, user_id: Uuid) -> DalResult<User> {
+    Ok(sqlx::query_as("SELECT * FROM users WHERE id=$1 FOR SHARE")
+        .bind(user_id)
+        .fetch_one(connection)
+        .await?)
 }
