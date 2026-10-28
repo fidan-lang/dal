@@ -101,7 +101,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> DalResult<bool> {
 }
 
 pub async fn yank(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     package_id: Uuid,
     version: &str,
     reason: Option<&str>,
@@ -118,7 +118,11 @@ pub async fn yank(
     Ok(res.rows_affected() > 0)
 }
 
-pub async fn unyank(pool: &PgPool, package_id: Uuid, version: &str) -> DalResult<bool> {
+pub async fn unyank(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    package_id: Uuid,
+    version: &str,
+) -> DalResult<bool> {
     let res = sqlx::query(
         "UPDATE package_versions SET yanked = false, yank_reason = NULL
          WHERE package_id = $1 AND version = $2 AND yanked",
@@ -147,16 +151,12 @@ pub async fn download_chart(
     version_id: Uuid,
     days: i64,
 ) -> DalResult<Vec<(chrono::NaiveDate, i64)>> {
-    let rows: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
-        "SELECT created_at::date AS day, COUNT(*) AS cnt
-         FROM download_logs
-         WHERE version_id = $1 AND created_at > now() - ($2 || ' days')::interval
-         GROUP BY day ORDER BY day",
-    )
-    .bind(version_id)
-    .bind(days)
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(chrono::NaiveDate, i64)> =
+        sqlx::query_as("SELECT * FROM dal_security.download_chart($1,$2)")
+            .bind(version_id)
+            .bind(days)
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }
 
@@ -193,9 +193,13 @@ pub async fn account_download(
         .bind(format!("{}ms", budget.as_millis()))
         .execute(&mut *tx)
         .await?;
-    increment_downloads(&mut *tx, version_id).await?;
-    super::packages::increment_downloads(&mut *tx, package_id).await?;
-    record_download(&mut *tx, version_id, ip_hash, user_agent).await?;
+    sqlx::query("SELECT dal_security.account_download($1,$2,$3,$4)")
+        .bind(version_id)
+        .bind(package_id)
+        .bind(ip_hash)
+        .bind(user_agent)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }

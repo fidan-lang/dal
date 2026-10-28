@@ -97,11 +97,30 @@ def reconcile(sbom, scan, tracker, identity, backport_check=None):
     return sorted(rows.values(), key=lambda row: (row["id"], row["package"]))
 
 
+def attach_runtime_evidence(rows, runtime):
+    affected = {
+        "CVE-2026-19499": {"strfmon", "strfmon_l"},
+        "CVE-2026-5435": {"ns_printrrf", "ns_printrr", "fp_nquery"},
+    }
+    imports = set(runtime["dynamicImports"])
+    if not imports or runtime.get("privilegeBearingFiles") != 0:
+        raise ValueError("Complete native import and privilege-bit evidence required")
+    for row in rows:
+        if row["id"] in affected:
+            row["native_evidence"] = {
+                "image_id": runtime["image"], "binary_sha256": runtime["binarySha256"],
+                "directly_imported_affected_symbols": sorted(affected[row["id"]] & imports),
+                "assessment": "No direct import does not exclude indirect libc reachability and is not risk acceptance.",
+            }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--debian-tracker", type=Path, required=True)
+    parser.add_argument("--runtime-evidence", type=Path)
     options = parser.parse_args()
+    runtime = json.loads(options.runtime_evidence.read_text(encoding="utf-8")) if options.runtime_evidence else []
     tracker_bytes = options.debian_tracker.read_bytes()
     tracker = json.loads(tracker_bytes)
     identities = json.loads((options.input / "identities.json").read_text(encoding="utf-8-sig"))
@@ -113,6 +132,11 @@ def main():
         scan = json.loads((options.input / f"{name}.cves.json").read_text(encoding="utf-8-sig"))
         rows = reconcile(sbom, scan, tracker, identity["config_id"],
                          lambda artifact, inventory, fixed: verified_backport(artifact, inventory, identity["image_id"], fixed))
+        if options.runtime_evidence:
+            evidence = next((row for row in runtime if row["image"] == identity["image_id"] and row["kind"] == name), None)
+            if evidence is None:
+                raise ValueError("Runtime receipt must match the exact scanned image")
+            attach_runtime_evidence(rows, evidence)
         output = {"image": identity, "tracker_url": TRACKER_URL,
                   "tracker_sha256": hashlib.sha256(tracker_bytes).hexdigest(),
                   "raw_severity_counts": dict(Counter(m["vulnerability"]["severity"] for m in scan["matches"])),

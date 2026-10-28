@@ -37,9 +37,6 @@ jobs:
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           GHCR_PRIVATE_ACCESS_REVIEW: ${{ vars.GHCR_PRIVATE_ACCESS_REVIEW }}
         run: python3 scripts/check-private-ghcr.py --receipt target/private-ghcr-before.json
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3, verified official tag
-        with:
-          platforms: arm64
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         if: inputs.publish
@@ -52,7 +49,8 @@ jobs:
         with:
           context: .
           target: ${{ matrix.target }}
-          platforms: linux/amd64,linux/arm64
+          # Enable another architecture only after its actual image acceptance passes.
+          platforms: linux/amd64
           push: ${{ inputs.publish }}
           tags: ghcr.io/fidan-lang/dal-${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           # Do not auto-link private packages to the public source repository.

@@ -384,7 +384,9 @@ async fn logout(
     revoke_global_session(&state.cognito, &user.username).await?;
     // Include tokens issued while the provider request was in flight. The
     // cutoff is monotonic; whole-second iat equality deliberately fails closed.
-    queries::users::advance_session_invalid_before(&state.db, user.id, Utc::now()).await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    queries::users::advance_session_invalid_before(&mut *tx, user.id, Utc::now()).await?;
+    tx.commit().await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -480,10 +482,10 @@ async fn verify_email(
                 "invalid or expired verification token".into(),
             ))?;
 
-    queries::users::set_email_verified(&mut *transaction, user_id).await?;
+    // The hash-consuming database capability marks email verified atomically.
 
     // Confirm the user in Cognito so they can log in
-    if let Some(user) = queries::users::get_by_id(&mut *transaction, user_id).await? {
+    if let Some(user) = queries::users::auth_by_id(&mut *transaction, user_id).await? {
         state.cognito.admin_confirm_user(&user.username).await?;
     } else {
         return Err(DalError::Validation("account no longer exists".into()));
@@ -581,7 +583,7 @@ async fn reset_password(
                 "invalid or expired reset token".into(),
             ))?;
 
-    let user = queries::users::get_by_id(&mut *transaction, user_id)
+    let user = queries::users::auth_by_id(&mut *transaction, user_id)
         .await?
         .ok_or(DalError::Unauthorized)?;
 
@@ -589,6 +591,7 @@ async fn reset_password(
         .cognito
         .admin_set_password(&user.username, &body.new_password)
         .await?;
+    dal_db::bind_actor(&mut transaction, user.id, None).await?;
     queries::users::advance_session_invalid_before(&mut *transaction, user.id, Utc::now()).await?;
 
     transaction.commit().await?;

@@ -27,6 +27,9 @@ function checkLocalRestore() {
   sql("dal_test", `
     INSERT INTO users (username,email,cognito_sub,email_verified,session_invalid_before)
       VALUES ('restore-audit','restore@example.test','restore-fixture',true,now());
+    INSERT INTO user_mfa(user_id,required) SELECT id,true FROM users;
+    INSERT INTO mfa_sessions(user_id,refresh_hash) SELECT id,repeat('c',64) FROM users;
+    INSERT INTO mfa_id_tokens(refresh_hash,token_hash,expires_at) VALUES(repeat('c',64),repeat('d',64),now()+interval '1 hour');
     INSERT INTO packages (name,license) VALUES ('restore-audit','Apache-2.0');
     INSERT INTO package_owners (package_id,user_id)
       SELECT p.id,u.id FROM packages p CROSS JOIN users u;
@@ -42,11 +45,15 @@ function checkLocalRestore() {
     'owners',(SELECT json_agg(o) FROM package_owners o),
     'tokens',(SELECT json_agg(t) FROM api_tokens t),
     'versions',(SELECT json_agg(v) FROM package_versions v),
-    'migrations',(SELECT json_agg(m ORDER BY version) FROM _sqlx_migrations m)
+    'migrations',(SELECT json_agg(m ORDER BY version) FROM _sqlx_migrations m),
+    'mfa_guard',(SELECT json_agg(g) FROM user_mfa g),
+    'mfa_sessions',(SELECT json_agg(s) FROM mfa_sessions s),
+    'mfa_id_tokens',(SELECT json_agg(t) FROM mfa_id_tokens t)
   )::text`;
   const before = sql("dal_test", snapshot);
   docker([...exec, "pg_dump", "-U", "dal_test", "-d", "dal_test", "-Fc", "-f", "/tmp/dal-audit.dump"]);
   docker([...exec, "createdb", "-U", "dal_test", "dal_restore_test"]);
+  sql("dal_restore_test", "REVOKE CREATE,TEMP ON DATABASE dal_restore_test FROM PUBLIC; GRANT CONNECT ON DATABASE dal_restore_test TO dal_api,dal_worker;");
   docker([...exec, "pg_restore", "--exit-on-error", "--no-owner", "-U", "dal_test", "-d", "dal_restore_test", "/tmp/dal-audit.dump"]);
   assert.deepEqual(JSON.parse(sql("dal_restore_test", snapshot)), JSON.parse(before));
   assert.equal(sql("dal_restore_test", "SELECT count(*) FROM users WHERE session_invalid_before IS NOT NULL"), "1");
@@ -64,8 +71,21 @@ function checkLocalRestore() {
     END;
   END $restore$`);
   assert.equal(sql("dal_restore_test", "SELECT count(*) FROM users"), "1");
+  const restored = statement => docker([...compose, "exec", "-T", "--env", "PGPASSWORD=test-api", "postgres-test", "psql",
+    "-h", "127.0.0.1", "-X", "-A", "-t", "-U", "dal_api", "-d", "dal_restore_test", "-v", "ON_ERROR_STOP=1", "-c", statement]);
+  assert.equal(restored("SELECT current_user"), "dal_api");
+  assert.equal(restored("SELECT count(*) FROM users"), "0", "Restored RLS must hide private accounts without context");
+  assert.equal(restored("SELECT count(*) FROM api_tokens"), "0");
+  assert.equal(restored("SELECT count(*) FROM mfa_sessions"), "0");
+  assert.equal(restored("SELECT count(*) FROM packages"), "1", "Restored grants must preserve public package discovery");
   console.log("Disposable PostgreSQL dump/restore preserved migrations, revocation cutoff, token scopes, ownership and yanked archive/checksum references; constraints enforce uniqueness.");
 }
+
+function parseDynamicImports(symbols) {
+  return [...new Set([...symbols.matchAll(/\bUND[ \t]+([^\s@]+)/g)].map(match => match[1]))].sort();
+}
+// ELF's empty symbol zero must not consume the following line's numeric index.
+assert.deepEqual(parseDynamicImports("0: 0000 0 NOTYPE LOCAL DEFAULT UND \n  1: 0000 0 FUNC GLOBAL DEFAULT UND malloc@GLIBC_2.2.5"), ["malloc"]);
 
 function docker(args, allowed = [0]) {
   const result = spawnSync("docker", args, {
@@ -95,6 +115,12 @@ try {
   }
   console.log("Local development port bindings stay on loopback; real environment files were not resolved.");
   docker([...compose, "up", "-d", "--wait", "--quiet-pull"]);
+  const serverImage = process.env.DAL_SERVER_IMAGE ?? "dal-server:audit-local";
+  docker(["run", "--rm", "--network", `${project}_default`, "--read-only", "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true", "--env", "DAL_MIGRATION_DATABASE_URL=postgres://dal_test:test@postgres-test:5432/dal_test",
+    serverImage, "--migrate"]);
+  docker([...compose, "exec", "-T", "postgres-test", "psql", "-U", "dal_test", "-d", "dal_test", "-v", "ON_ERROR_STOP=1",
+    "-c", "ALTER ROLE dal_api PASSWORD 'test-api'; ALTER ROLE dal_worker PASSWORD 'test-worker';"]);
   const environment = {
     AWS_ACCESS_KEY_ID: "test",
     AWS_SECRET_ACCESS_KEY: "test",
@@ -152,10 +178,18 @@ try {
       "1",
       "--env-file",
       envFile,
+      "--env", `DATABASE_URL=postgres://dal_${kind === "server" ? "api:test-api" : "worker:test-worker"}@postgres-test:5432/dal_test`,
       ...(kind === "server" ? ["--publish", "127.0.0.1::8080"] : []),
       process.env[`DAL_${kind.toUpperCase()}_IMAGE`] ?? `dal-${kind}:audit-local`,
     ]);
     assert.equal(docker(["exec", name, "id", "-u"]), "10001");
+    // Inspect all image paths in a separate read-only, networkless process. The
+    // application keeps cap-drop ALL; the inspector only needs directory reads.
+    const exactImage = JSON.parse(docker(["inspect", name]))[0].Image;
+    assert.equal(docker(["run", "--rm", "--user", "0", "--network", "none", "--read-only",
+      "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true",
+      "--entrypoint", "find", exactImage, "/", "-xdev", "-type", "f", "-perm", "/6000", "-print"]), "",
+      "Runtime image must not retain setuid/setgid tools");
     for (const packageName of ["curl", "libcurl4t64"]) {
       const installed = docker(["exec", name, "dpkg-query", "-W", "-f=${db:Status-Status}", packageName], [0, 1]);
       assert.notEqual(installed, "installed", `Unneeded vulnerable runtime package: ${packageName}`);
@@ -231,9 +265,22 @@ try {
     docker(["stop", "--time", "35", name]);
     const stopped = JSON.parse(docker(["inspect", name]))[0];
     assert.equal(stopped.State.ExitCode, 0, `${kind} must shut down cleanly`);
+    const binary = path.join(scratch, `dal-${kind}`);
+    docker(["cp", `${name}:/usr/local/bin/dal-${kind}`, binary]);
+    const inspector = readFileSync(path.join(root, "Dockerfile"), "utf8").match(/^ARG RUST_IMAGE=(.+)$/m)?.[1].trim();
+    assert(inspector?.includes("@sha256:"), "ELF inspector must use the pinned build image");
+    const symbols = docker(["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+      "--security-opt", "no-new-privileges:true", "--memory", "128m", "--cpus", "1", "--pids-limit", "32",
+      "--mount", `type=bind,source=${scratch},target=/evidence,readonly`, "--entrypoint", "/usr/bin/readelf",
+      inspector, "--wide", "--dyn-syms", `/evidence/dal-${kind}`]);
+    const dynamicImports = parseDynamicImports(symbols);
+    assert(dynamicImports.includes("__libc_start_main"), "Must inspect actual ELF imports, not an empty report");
     summary.push({
       kind,
       image: inspection.Image,
+      binarySha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
+      dynamicImports,
+      privilegeBearingFiles: 0,
       uid: 10001,
       readOnly: true,
       idleStats: JSON.parse(stats),

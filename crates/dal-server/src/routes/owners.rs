@@ -40,7 +40,7 @@ async fn list_owners(
     let mut enriched = Vec::with_capacity(owners.len());
 
     for owner in owners {
-        let user = queries::users::get_by_id(&state.db, owner.user_id)
+        let user = queries::users::get_public_by_id(&state.db, owner.user_id)
             .await?
             .ok_or_else(|| DalError::UserNotFound(owner.user_id.to_string()))?;
 
@@ -102,8 +102,9 @@ async fn invite_owner(
     let raw_token = format!("oi_{}", hex::encode(Uuid::new_v4().as_bytes()));
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::days(7);
+    let mut tx = actor.transaction(&state.db).await?;
     let invite = queries::owner_invites::upsert(
-        &state.db,
+        &mut *tx,
         pkg.id,
         invitee.id,
         actor.user.id,
@@ -113,6 +114,7 @@ async fn invite_owner(
     )
     .await?;
 
+    tx.commit().await?;
     let _ = enqueue_job(
         &state,
         json!({
@@ -149,7 +151,9 @@ async fn list_pending_invites(
     State(state): State<AppState>,
     VerifiedSession(user): VerifiedSession,
 ) -> Result<Json<Value>, DalError> {
-    let invites = queries::owner_invites::list_pending_for_user(&state.db, user.id).await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    let invites = queries::owner_invites::list_pending_for_user(&mut *tx, user.id).await?;
+    tx.commit().await?;
     let mut enriched = Vec::with_capacity(invites.len());
 
     for invite in invites {
@@ -164,9 +168,11 @@ async fn accept_invite(
     VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
-    let pending = queries::owner_invites::get_pending_for_user(&state.db, id, user.id)
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    let pending = queries::owner_invites::get_pending_for_user(&mut *tx, id, user.id)
         .await?
         .ok_or_else(|| DalError::Validation("invite not found or expired".into()))?;
+    tx.commit().await?;
     let accepted = queries::owner_invites::accept(&state.db, id, user.id)
         .await?
         .ok_or_else(|| DalError::Validation("invite not found or expired".into()))?;
@@ -195,17 +201,19 @@ async fn decline_invite(
     VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
-    let pending = queries::owner_invites::get_pending_for_user(&state.db, id, user.id)
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    let pending = queries::owner_invites::get_pending_for_user(&mut *tx, id, user.id)
         .await?
         .ok_or_else(|| DalError::Validation("invite not found or expired".into()))?;
     let pkg = queries::packages::get_by_id(&state.db, pending.package_id)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(pending.package_id.to_string()))?;
 
-    if !queries::owner_invites::decline(&state.db, id, user.id).await? {
+    if !queries::owner_invites::decline(&mut *tx, id, user.id).await? {
         return Err(DalError::Validation("invite not found or expired".into()));
     }
 
+    tx.commit().await?;
     let _ = queries::audit::record(
         &state.db,
         Some(user.id),
@@ -234,8 +242,8 @@ async fn remove_owner(
         .await?
         .ok_or_else(|| DalError::UserNotFound(username.clone()))?;
 
-    let mut tx = state.db.begin().await?;
-    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+    let mut tx = actor.transaction(&state.db).await?;
+    sqlx::query("SELECT dal_security.lock_package($1)")
         .bind(pkg.id)
         .fetch_one(&mut *tx)
         .await?;
@@ -313,6 +321,7 @@ async fn transfer_ownership(
         actor.user.id,
         target.id,
         actor.is_admin(),
+        actor.api_token.as_ref().map(|token| token.id),
     )
     .await?;
 
@@ -333,7 +342,7 @@ async fn serialize_invite(state: &AppState, invite: &OwnershipInvite) -> Result<
     let pkg = queries::packages::get_by_id(&state.db, invite.package_id)
         .await?
         .ok_or_else(|| DalError::PackageNotFound(invite.package_id.to_string()))?;
-    let inviter = queries::users::get_by_id(&state.db, invite.inviter_id)
+    let inviter = queries::users::get_public_by_id(&state.db, invite.inviter_id)
         .await?
         .ok_or_else(|| DalError::UserNotFound(invite.inviter_id.to_string()))?;
 

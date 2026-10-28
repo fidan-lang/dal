@@ -376,3 +376,162 @@ async fn cognito_managed_setup_challenge_replay_disable_and_downgrade_guard() {
     assert!(!dal_db::queries::users::mfa_required(&db, id).await.unwrap());
     provider.abort();
 }
+
+#[tokio::test]
+async fn stale_failed_verification_cannot_undo_successful_mfa_enrollment() {
+    let baseline = common::TestApp::spawn().await;
+    let db = common::owner_database().await;
+    let id = Uuid::new_v4();
+    let name = format!("race{}", &id.simple().to_string()[..16]);
+    dal_db::queries::users::create(
+        &db,
+        id,
+        &name,
+        &format!("{name}@fixture.test"),
+        &id.to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+    dal_db::queries::users::set_email_verified(&db, id)
+        .await
+        .unwrap();
+    let jwt = baseline.interactive_token(&db, id).await;
+    let stale_query = Arc::new(tokio::sync::Notify::new());
+    let release_stale = Arc::new(tokio::sync::Notify::new());
+    let provider_route = Router::new().route(
+        "/",
+        post({
+            let stale_query = stale_query.clone();
+            let release_stale = release_stale.clone();
+            move |headers: HeaderMap, raw: Bytes| {
+                let stale_query = stale_query.clone();
+                let release_stale = release_stale.clone();
+                async move {
+                    let body: Value = serde_json::from_slice(&raw).unwrap();
+                    let action = headers["x-amz-target"]
+                        .to_str()
+                        .unwrap()
+                        .split('.')
+                        .next_back()
+                        .unwrap();
+                    let response = match action {
+                        "VerifySoftwareToken" => {
+                            json!({"Status":if body["UserCode"]=="654321"{"SUCCESS"}else{"ERROR"}})
+                        }
+                        "AdminGetUser" => {
+                            // Model a read captured before the successful preference change,
+                            // whose response is delivered after that change commits.
+                            stale_query.notify_one();
+                            release_stale.notified().await;
+                            json!({"Username":"fixture","UserMFASettingList":[]})
+                        }
+                        "SetUserMFAPreference" | "AdminUserGlobalSignOut" => json!({}),
+                        _ => panic!("unexpected fixture operation: {action}"),
+                    };
+                    Json(response)
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let provider =
+        tokio::spawn(async move { axum::serve(listener, provider_route).await.unwrap() });
+    let app =
+        common::TestApp::with_cognito_control_endpoint(common::test_config(), Some(&endpoint))
+            .await;
+    // Seed the two in-flight setup capabilities at the concurrency boundary.
+    // No Cognito secret or credential is read from a real provider.
+    let make_pending = || {
+        dal_server::mfa::Pending::new(
+            id,
+            dal_server::mfa::PendingKind::Setup {
+                access: "fixture-access".into(),
+            },
+        )
+    };
+    let first = app.mfa.insert(make_pending()).unwrap();
+    let second = app.mfa.insert(make_pending()).unwrap();
+    sqlx::query("INSERT INTO user_mfa(user_id) VALUES($1)")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let mut blocker = db.begin().await.unwrap();
+    dal_db::queries::users::lock_mfa(&mut blocker, id)
+        .await
+        .unwrap();
+    let request = |handle: &str, code: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/auth/mfa/verify")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {jwt}"))
+            .header("cookie", format!("dal_mfa_setup={handle}"))
+            .body(Body::from(json!({"code":code}).to_string()))
+            .unwrap()
+    };
+    let first_request = request(&first, "000000");
+    let second_request = request(&second, "654321");
+    let second_ready = tokio::sync::Notify::new();
+    let wait_for_locks = |minimum: i64| {
+        let db = &db;
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%user_mfa%' AND pid<>pg_backend_pid()")
+                        .fetch_one(db).await.unwrap();
+                    if waiting >= minimum { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("verification requests must reach the guard row lock");
+        }
+    };
+    let verify = async {
+        tokio::join!(app.raw_request(first_request), async {
+            second_ready.notified().await;
+            app.raw_request(second_request).await
+        })
+    };
+    let orchestrate = async {
+        // Queue the invalid verification first, while both requests authenticate
+        // against the committed password-only state before the barrier changes.
+        wait_for_locks(1).await;
+        second_ready.notify_one();
+        wait_for_locks(2).await;
+        blocker.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), stale_query.notified())
+            .await
+            .expect("invalid verification must query provider status");
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let cutoff: Option<chrono::DateTime<chrono::Utc>> =
+                    sqlx::query_scalar("SELECT session_invalid_before FROM users WHERE id=$1")
+                        .bind(id)
+                        .fetch_one(&db)
+                        .await
+                        .unwrap();
+                if cutoff.is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        release_stale.notify_one();
+    };
+    let ((failed, success), ()) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        tokio::join!(verify, orchestrate)
+    })
+    .await
+    .unwrap();
+    assert_eq!(failed.status(), 401);
+    assert_eq!(success.status(), 200);
+    assert!(
+        dal_db::queries::users::mfa_required(&db, id).await.unwrap(),
+        "a stale failed verification must not clear the completed enrollment barrier"
+    );
+    provider.abort();
+}

@@ -62,8 +62,9 @@ async fn update_profile(
     validate_profile_url(body.website.as_deref(), "website")?;
     validate_profile_url(body.avatar_url.as_deref(), "avatar_url")?;
 
+    let mut tx = actor.transaction(&state.db).await?;
     let updated = queries::users::update_profile(
-        &state.db,
+        &mut *tx,
         actor.user.id,
         body.display_name.as_deref(),
         body.bio.as_deref(),
@@ -71,6 +72,7 @@ async fn update_profile(
         body.avatar_url.as_deref(),
     )
     .await?;
+    tx.commit().await?;
     Ok(Json(
         serde_json::to_value(CurrentUserResponse::from(updated)).unwrap_or_default(),
     ))

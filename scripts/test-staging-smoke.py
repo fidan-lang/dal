@@ -60,15 +60,24 @@ class StagingTests(unittest.TestCase):
                     if arguments[0] == "pg_dump":
                         Path(arguments[-1]).write_bytes(b"isolated fixture")
                     if arguments[0] == "psql":
-                        return "0" if "information_schema" in arguments[-1] else "3"
+                        return "0" if "information_schema" in arguments[-1] or "has_database_privilege" in arguments[-1] else "3"
                     return ""
                 with patch.object(staging, "command", side_effect=execute) as command:
                     staging.database({})
                     for call in command.call_args_list:
                         self.assertNotIn("PGHOSTADDR", call.args[1])
                         self.assertNotIn("PGSERVICE", call.args[1])
+                    restore = next(call.args[0] for call in command.call_args_list if call.args[0][0] == "pg_restore")
+                    self.assertNotIn("--no-acl", restore, "RLS runtime grants must survive restoration")
                     self.assertEqual([call.args[0][0] for call in command.call_args_list],
-                                     ["psql", "psql", "pg_dump", "pg_restore", "psql"])
+                                     ["psql", "psql", "psql", "pg_dump", "pg_restore", "psql"])
+                def unsafe_runtime(arguments, env=None):
+                    if arguments[0] == "psql":
+                        return "1" if "has_database_privilege" in arguments[-1] else "0"
+                    self.fail("unsafe restore privileges must fail before dump/restore")
+                with patch.object(staging, "command", side_effect=unsafe_runtime):
+                    with self.assertRaisesRegex(ValueError,"CREATE/TEMP"):
+                        staging.database({})
                 for key, value in [
                     ("DAL_CONFIRMED_STAGING_SOURCE", "postgresql://other.example.test:5432/source"),
                     ("DAL_CONFIRMED_STAGING_TARGET", "postgresql://isolated.example.test:5432/other"),

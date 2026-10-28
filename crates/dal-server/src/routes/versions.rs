@@ -296,7 +296,7 @@ async fn publish(
 
     let user = &actor.user;
     // One transaction and one connection serialize package creation and publication.
-    let mut transaction = state.db.begin().await?;
+    let mut transaction = actor.transaction(&state.db).await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("dal-publish:{}", manifest.package.name))
         .execute(&mut *transaction)
@@ -649,7 +649,9 @@ async fn yank(
         return Err(DalError::Forbidden);
     }
 
-    let ok = queries::versions::yank(&state.db, pkg.id, &version, body.reason.as_deref()).await?;
+    let mut tx = actor.transaction(&state.db).await?;
+    let ok = queries::versions::yank(&mut *tx, pkg.id, &version, body.reason.as_deref()).await?;
+    tx.commit().await?;
     if !ok {
         return Err(DalError::VersionNotFound(version, name));
     }
@@ -672,7 +674,9 @@ async fn unyank(
         return Err(DalError::Forbidden);
     }
 
-    let ok = queries::versions::unyank(&state.db, pkg.id, &version).await?;
+    let mut tx = actor.transaction(&state.db).await?;
+    let ok = queries::versions::unyank(&mut *tx, pkg.id, &version).await?;
+    tx.commit().await?;
     if !ok {
         return Err(DalError::VersionNotFound(version, name));
     }

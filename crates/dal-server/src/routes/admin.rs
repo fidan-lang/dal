@@ -27,7 +27,9 @@ async fn delete_package(
         .ok_or_else(|| DalError::PackageNotFound(name.clone()))?;
     let versions = queries::versions::list_for_package(&state.db, pkg.id).await?;
 
-    let deleted = queries::packages::delete(&state.db, pkg.id).await?;
+    let mut tx = actor.transaction(&state.db).await?;
+    let deleted = queries::packages::delete(&mut *tx, pkg.id).await?;
+    tx.commit().await?;
     if !deleted {
         return Err(DalError::PackageNotFound(name));
     }

@@ -4,8 +4,13 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 pub async fn authorized(pool: &PgPool, user: Uuid, token_hash: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mfa_id_tokens t JOIN mfa_sessions s USING(refresh_hash) WHERE s.user_id=$1 AND t.token_hash=$2 AND s.expires_at>now() AND t.expires_at>now())")
-        .bind(user).bind(token_hash).fetch_one(pool).await?)
+    Ok(
+        sqlx::query_scalar("SELECT dal_security.mfa_authorized($1,$2)")
+            .bind(user)
+            .bind(token_hash)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 pub async fn valid_refresh(connection: &mut PgConnection, user: Uuid, hash: &str) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mfa_sessions WHERE user_id=$1 AND refresh_hash=$2 AND expires_at>now())")

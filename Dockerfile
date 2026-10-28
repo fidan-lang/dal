@@ -19,7 +19,10 @@ COPY LICENSE NOTICE /usr/share/doc/dal/
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Both Rust executables use Rustls/AWS-LC; ldd confirms no OpenSSL runtime dependency.
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* && \
-    groupadd --system --gid 10001 dal && useradd --system --uid 10001 --gid dal --no-create-home dal
+    groupadd --system --gid 10001 dal && useradd --system --uid 10001 --gid dal --no-create-home dal && \
+    find / -xdev -type f -perm /6000 -exec chmod a-s {} +
+# DAL uses no OS login/mount/password utilities. Keep package metadata for CVE
+# scanning; stripping privilege bits is defense in depth, not a package patch.
 USER dal:dal
 WORKDIR /tmp
 FROM runtime AS server

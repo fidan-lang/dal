@@ -9,7 +9,8 @@
 #
 # Usage:
 #   cp .env.example .env          # fill in your real AWS Cognito creds
-#   docker compose up --build
+#   Follow deploy/database-roles.md for the controlled migration and local roles.
+#   docker compose up --build dal-server dal-worker
 #
 # For Cognito in dev: create a real AWS account (free tier) *or* run the
 # unofficial `cognito-local` image (not included here – see Plan.md §Appendix).
@@ -73,7 +74,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgres://dal:password@postgres:5432/dal
+      DATABASE_URL: postgres://dal_api:dev-api@postgres:5432/dal
       DAL_STORAGE_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo
@@ -97,7 +98,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgres://dal:password@postgres:5432/dal
+      DATABASE_URL: postgres://dal_worker:dev-worker@postgres:5432/dal
       DAL_STORAGE_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_ENDPOINT_URL: http://localstack:4566
       DAL_SQS_QUEUE_URL: http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/dal-jobs.fifo

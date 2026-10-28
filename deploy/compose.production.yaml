@@ -3,7 +3,7 @@
 services:
   server:
     image: ${DAL_SERVER_IMAGE:?approved immutable server image required}
-    env_file: ${DAL_ENV_FILE:?path to protected production environment required}
+    env_file: ${DAL_API_ENV_FILE:?protected API environment with dal_api database identity required}
     environment:
       DAL_LISTEN_ADDR: 0.0.0.0:8080
       # Production must not expose reusable signed object-store download URLs.
@@ -21,12 +21,12 @@ services:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
   worker:
-    # API completes its existing SQLx migration step before exposing health.
+    # Owner-controlled migrations must complete before either runtime starts.
     depends_on:
       server:
         condition: service_healthy
     image: ${DAL_WORKER_IMAGE:?approved immutable worker image required}
-    env_file: ${DAL_ENV_FILE:?path to protected production environment required}
+    env_file: ${DAL_WORKER_ENV_FILE:?protected worker environment with dal_worker database identity required}
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]
     cap_drop: [ALL]
