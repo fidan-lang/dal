@@ -5,13 +5,20 @@ use dotenvy::dotenv;
 use tracing::{info, warn};
 
 mod email;
+mod health;
 mod jobs;
 mod maintenance;
 mod worker;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--healthcheck"] {
+        return health::check();
+    }
+    anyhow::ensure!(arguments.is_empty(), "usage: dal-worker [--healthcheck]");
     dotenv().ok();
+    health::reset().context("reset worker health")?;
     tracing_init::init();
 
     let queue_url = std::env::var("DAL_SQS_QUEUE_URL").context("missing DAL_SQS_QUEUE_URL")?;
@@ -74,7 +81,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!("Dal worker starting — polling {queue_url}");
-    worker::run(sqs, queue_url, db, mailjet, shutdown_rx).await
+    let result = worker::run(sqs, queue_url, db, mailjet, shutdown_rx).await;
+    health::reset().context("clear worker health")?;
+    result
 }
 
 fn log_aws_runtime_probe(component: &str) {

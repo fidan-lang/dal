@@ -351,3 +351,5 @@ shared-IP installs and security monitoring on the real topology before productio
 These source changes do not deploy DAL, publish images, or apply Cloudflare rules.
 
 Optional user-controlled authenticator MFA, its API contract and the pending Cognito rollout/recovery procedure are described in [deploy/optional-totp.md](deploy/optional-totp.md). Enabling it requires a separately approved OPTIONAL Cognito configuration; normal package installation stays anonymous.
+
+Private image scan reproduction, residual-risk handling and owner-only GHCR access gates are maintained in [deploy/container-security.md](deploy/container-security.md).
