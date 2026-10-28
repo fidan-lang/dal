@@ -126,3 +126,6 @@ and the actual browser-test worker runs as `dal_worker`.
 Source merge is not activation approval. Live Neon TLS/IAM, owner privileges,
 credential provisioning, pooler behavior and the production rollout remain
 **NOT VERIFIED / PENDING OPERATOR APPROVAL**.
+
+PostgreSQL references: [row security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html),
+[security-definer safety](https://www.postgresql.org/docs/current/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY).

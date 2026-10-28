@@ -31,6 +31,17 @@ class Dispositions(unittest.TestCase):
                 self.assertIn("--read-only", run.call_args.args[0])
                 self.assertIn("none", run.call_args.args[0])
 
+    def test_no_direct_import_never_automatically_accepts_a_cve(self):
+        rows=[{"id":"CVE-2026-19499","disposition":"PRODUCTION_BLOCKED"}]
+        runtime={"dynamicImports":["__libc_start_main"],"privilegeBearingFiles":0,"image":"sha256:fixture","binarySha256":"fixture"}
+        module.attach_runtime_evidence(rows,runtime)
+        self.assertEqual(rows[0]["native_evidence"]["directly_imported_affected_symbols"],[])
+        self.assertEqual(rows[0]["disposition"],"PRODUCTION_BLOCKED")
+        module.attach_runtime_evidence(rows,{**runtime,"dynamicImports":["strfmon"]})
+        self.assertEqual(rows[0]["native_evidence"]["directly_imported_affected_symbols"],["strfmon"])
+        with self.assertRaises(ValueError): module.attach_runtime_evidence(rows,{**runtime,"dynamicImports":[]})
+        with self.assertRaises(ValueError): module.attach_runtime_evidence(rows,{**runtime,"privilegeBearingFiles":11})
+
     def test_identity_vendor_and_unknown_findings_fail_closed(self):
         sbom = {"source": {"metadata": {"imageID": "sha256:exact"}}, "artifacts": [
             {"id": "a", "name": "libc6", "version": "2.41", "metadata": {"source": "glibc"}}]}

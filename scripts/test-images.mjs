@@ -177,7 +177,12 @@ try {
       process.env[`DAL_${kind.toUpperCase()}_IMAGE`] ?? `dal-${kind}:audit-local`,
     ]);
     assert.equal(docker(["exec", name, "id", "-u"]), "10001");
-    assert.equal(docker(["exec", "--user", "0", name, "find", "/", "-xdev", "-type", "f", "-perm", "/6000", "-print"]), "",
+    // Inspect all image paths in a separate read-only, networkless process. The
+    // application keeps cap-drop ALL; the inspector only needs directory reads.
+    const exactImage = JSON.parse(docker(["inspect", name]))[0].Image;
+    assert.equal(docker(["run", "--rm", "--user", "0", "--network", "none", "--read-only",
+      "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true",
+      "--entrypoint", "find", exactImage, "/", "-xdev", "-type", "f", "-perm", "/6000", "-print"]), "",
       "Runtime image must not retain setuid/setgid tools");
     for (const packageName of ["curl", "libcurl4t64"]) {
       const installed = docker(["exec", name, "dpkg-query", "-W", "-f=${db:Status-Status}", packageName], [0, 1]);
@@ -254,9 +259,22 @@ try {
     docker(["stop", "--time", "35", name]);
     const stopped = JSON.parse(docker(["inspect", name]))[0];
     assert.equal(stopped.State.ExitCode, 0, `${kind} must shut down cleanly`);
+    const binary = path.join(scratch, `dal-${kind}`);
+    docker(["cp", `${name}:/usr/local/bin/dal-${kind}`, binary]);
+    const inspector = readFileSync(path.join(root, "Dockerfile"), "utf8").match(/^ARG RUST_IMAGE=(.+)$/m)?.[1].trim();
+    assert(inspector?.includes("@sha256:"), "ELF inspector must use the pinned build image");
+    const symbols = docker(["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+      "--security-opt", "no-new-privileges:true", "--memory", "128m", "--cpus", "1", "--pids-limit", "32",
+      "--mount", `type=bind,source=${scratch},target=/evidence,readonly`, "--entrypoint", "/usr/bin/readelf",
+      inspector, "--wide", "--dyn-syms", `/evidence/dal-${kind}`]);
+    const dynamicImports = [...new Set([...symbols.matchAll(/\bUND\s+([^\s@]+)/g)].map(match => match[1]))].sort();
+    assert(dynamicImports.includes("__libc_start_main"), "Must inspect actual ELF imports, not an empty report");
     summary.push({
       kind,
       image: inspection.Image,
+      binarySha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
+      dynamicImports,
+      privilegeBearingFiles: 0,
       uid: 10001,
       readOnly: true,
       idleStats: JSON.parse(stats),
