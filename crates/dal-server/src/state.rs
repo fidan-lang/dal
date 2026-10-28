@@ -55,7 +55,7 @@ impl AppState {
         cfg.public_reads.validate()?;
         // Database
         let db = dal_db::connect(&cfg.database_url).await?;
-        dal_db::migrate(&db).await?;
+        dal_db::verify_runtime(&db, "dal_api").await?;
 
         log_aws_runtime_probe("dal-server");
 

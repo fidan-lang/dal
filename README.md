@@ -88,6 +88,12 @@ cp .env.example .env
 docker compose up postgres -d
 ```
 
+Before starting the API or worker, apply the controlled local migration and
+provision the separate runtime roles as described in
+[database roles and RLS](deploy/database-roles.md). Normal startup no longer
+migrates using an owner credential.
+
+
 ### 4. Run the server
 
 ```bash
@@ -97,7 +103,7 @@ cargo run -p dal-server
 ### 5. Run the worker (optional for local dev)
 
 ```bash
-cargo run -p dal-worker
+DATABASE_URL=postgres://dal_worker:dev-worker@localhost:5432/dal cargo run -p dal-worker
 ```
 
 ### 6. Run the frontend

@@ -10,6 +10,8 @@ pub async fn record(
     target_type: Option<&str>,
     metadata: serde_json::Value,
 ) -> DalResult<()> {
+    let actor = actor_id.ok_or(dal_common::error::DalError::Unauthorized)?;
+    let mut tx = crate::actor_transaction(pool, actor, None).await?;
     sqlx::query(
         "INSERT INTO audit_log (id, actor_id, action, target_id, target_type, metadata)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb)",
@@ -19,7 +21,8 @@ pub async fn record(
     .bind(target_id)
     .bind(target_type)
     .bind(metadata)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }

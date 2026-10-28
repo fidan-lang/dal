@@ -26,10 +26,20 @@ class PrivateImages(unittest.TestCase):
             if "docker/login-action@" in step.get("uses", ""):
                 self.assertNotIn("GITHUB_TOKEN", step["with"]["password"])
         build = next(step for step in steps if "docker/build-push-action@" in step.get("uses", ""))
+        self.assertEqual(build["with"]["platforms"], "linux/amd64", "Only the natively accepted image architecture may be published")
         self.assertNotIn("org.opencontainers.image.source", build["with"]["labels"])
         self.assertEqual(build["with"]["push"], "${{ inputs.publish }}")
         self.assertNotIn("cache-to", build["with"], "Private image layers must not enter a public repository cache")
         self.assertNotIn("cache-from", build["with"])
+
+    def test_production_runtime_credentials_are_separate(self):
+        import yaml
+        compose=yaml.safe_load((Path(__file__).parents[1] / "deploy/compose.production.yaml").read_text())
+        server=compose["services"]["server"]["env_file"]
+        worker=compose["services"]["worker"]["env_file"]
+        self.assertIn("DAL_API_ENV_FILE",server)
+        self.assertIn("DAL_WORKER_ENV_FILE",worker)
+        self.assertNotEqual(server,worker)
 
     def test_only_explicit_private_packages_are_accepted(self):
         for value in ("public", "internal", None):

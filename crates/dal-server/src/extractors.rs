@@ -26,6 +26,18 @@ pub struct AuthActor {
 }
 
 impl AuthActor {
+    pub async fn transaction<'a>(
+        &self,
+        db: &'a dal_db::PgPool,
+    ) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, DalError> {
+        Ok(dal_db::actor_transaction(
+            db,
+            self.user.id,
+            self.api_token.as_ref().map(|token| token.id),
+        )
+        .await?)
+    }
+
     pub fn is_admin(&self) -> bool {
         self.user.is_admin && self.user.email_verified && self.api_token.is_none()
     }
@@ -103,10 +115,10 @@ impl FromRequestParts<AppState> for AuthActor {
             let api_tok = api_tok.ok_or(DalError::Unauthorized)?;
 
             state
-                .best_effort_accounting(queries::tokens::touch(&state.db, api_tok.id))
+                .best_effort_accounting(queries::tokens::touch(&state.db, &hash))
                 .await;
 
-            let user = queries::users::get_by_id(&state.db, api_tok.user_id).await?;
+            let user = queries::users::auth_by_id(&state.db, api_tok.user_id).await?;
             let user = user.ok_or(DalError::Unauthorized)?;
 
             return Ok(AuthActor {
@@ -219,7 +231,7 @@ pub(crate) async fn bind_mfa_session(
     is_refresh: bool,
 ) -> Result<User, DalError> {
     let (user, claims) = validated_identity(state, token).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     let user = queries::users::lock_session(&mut tx, user.id).await?;
     if !user.email_verified
         || user.cognito_sub != claims.sub

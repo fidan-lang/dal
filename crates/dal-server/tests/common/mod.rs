@@ -17,7 +17,7 @@ pub fn test_config() -> Config {
     let cfg = Config {
         totp_enabled: true,
         database_url: std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://dal_test:test@localhost:5433/dal_test".to_string()),
+            .unwrap_or_else(|_| "postgres://dal_test:test@127.0.0.1:5433/dal_test".to_string()),
         trusted_proxies: Vec::new(),
         listen_addr: "127.0.0.1:0".to_string(),
         base_url: "http://localhost".to_string(),
@@ -146,7 +146,7 @@ impl TestApp {
     /// local issuer/JWKS identity intact for signed session validation.
     pub async fn with_cognito_control_endpoint(cfg: Config, endpoint: Option<&str>) -> Self {
         assert_isolated_config(&cfg);
-        let mut state = AppState::build(&cfg).await.unwrap_or_else(|e| {
+        let mut state = build_state(&cfg).await.unwrap_or_else(|e| {
             panic!("TestApp::spawn failed — is docker-compose.test.yml running?\n\nError: {e:#}")
         });
         if let Some(endpoint) = endpoint {
@@ -301,4 +301,31 @@ impl TestApp {
 /// Auth-dependant tests check this and skip themselves if false.
 pub fn cognito_available() -> bool {
     std::env::var("TEST_COGNITO_ENDPOINT_URL").is_ok()
+}
+
+/// Controlled fixture migration credentials never reach the API runtime pool.
+pub async fn build_state(cfg: &Config) -> anyhow::Result<AppState> {
+    let mut owner_cfg = cfg.clone();
+    owner_cfg.database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://dal_test:test@127.0.0.1:5433/dal_test".into());
+    assert_isolated_config(&owner_cfg);
+    let owner = dal_db::connect(&owner_cfg.database_url).await?;
+    dal_db::migrate(&owner).await?;
+    sqlx::raw_sql(
+        "ALTER ROLE dal_api PASSWORD 'test-api'; ALTER ROLE dal_worker PASSWORD 'test-worker';",
+    )
+    .execute(&owner)
+    .await?;
+    owner.close().await;
+    let mut runtime_cfg = cfg.clone();
+    runtime_cfg.database_url = std::env::var("TEST_API_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://dal_api:test-api@127.0.0.1:5433/dal_test".into());
+    assert_isolated_config(&runtime_cfg);
+    AppState::build(&runtime_cfg).await
+}
+
+pub async fn owner_database() -> dal_db::PgPool {
+    // Fixture writes/assertions use the owner; HTTP application state never does.
+    let cfg = test_config();
+    dal_db::connect(&cfg.database_url).await.unwrap()
 }

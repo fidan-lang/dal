@@ -67,7 +67,10 @@ pub async fn get_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<Package>> {
     Ok(pkg)
 }
 
-pub async fn delete(pool: &PgPool, id: Uuid) -> DalResult<bool> {
+pub async fn delete(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> DalResult<bool> {
     let res = sqlx::query("DELETE FROM packages WHERE id = $1")
         .bind(id)
         .execute(pool)
@@ -310,14 +313,15 @@ pub async fn transfer_ownership(
     from_user_id: Uuid,
     to_user_id: Uuid,
     allow_admin: bool,
+    api_token: Option<Uuid>,
 ) -> DalResult<()> {
     if from_user_id == to_user_id {
         return Err(dal_common::error::DalError::Validation(
             "cannot transfer ownership to yourself".into(),
         ));
     }
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+    let mut tx = crate::actor_transaction(pool, from_user_id, api_token).await?;
+    sqlx::query("SELECT dal_security.lock_package($1)")
         .bind(package_id)
         .fetch_one(&mut *tx)
         .await?;

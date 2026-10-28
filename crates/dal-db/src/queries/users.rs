@@ -11,18 +11,15 @@ pub async fn create(
     cognito_sub: &str,
     display_name: Option<&str>,
 ) -> DalResult<User> {
-    let user = sqlx::query_as::<_, User>(
-        "INSERT INTO users (id, username, email, cognito_sub, display_name)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *",
-    )
-    .bind(id)
-    .bind(username)
-    .bind(email)
-    .bind(cognito_sub)
-    .bind(display_name)
-    .fetch_one(pool)
-    .await?;
+    let user =
+        sqlx::query_as::<_, User>("SELECT * FROM dal_security.register_user($1,$2,$3,$4,$5)")
+            .bind(id)
+            .bind(username)
+            .bind(email)
+            .bind(cognito_sub)
+            .bind(display_name)
+            .fetch_one(pool)
+            .await?;
     Ok(user)
 }
 
@@ -30,7 +27,7 @@ pub async fn get_by_id(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,
 ) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id=$1")
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -38,7 +35,7 @@ pub async fn get_by_id(
 }
 
 pub async fn get_by_username(pool: &PgPool, username: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(username) = lower($1)")
+    let user = sqlx::query_as::<_, User>("SELECT * FROM dal_security.auth_user('username',$1)")
         .bind(username)
         .fetch_optional(pool)
         .await?;
@@ -46,7 +43,7 @@ pub async fn get_by_username(pool: &PgPool, username: &str) -> DalResult<Option<
 }
 
 pub async fn get_by_email(pool: &PgPool, email: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(email) = lower($1)")
+    let user = sqlx::query_as::<_, User>("SELECT * FROM dal_security.auth_user('email',$1)")
         .bind(email)
         .fetch_optional(pool)
         .await?;
@@ -79,13 +76,17 @@ pub async fn lock_stale_unverified(
     user_id: Uuid,
     older_than: chrono::DateTime<chrono::Utc>,
 ) -> DalResult<Option<User>> {
-    Ok(sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE id = $1 AND email_verified = false AND created_at < $2 FOR UPDATE",
-    ).bind(user_id).bind(older_than).fetch_optional(connection).await?)
+    Ok(
+        sqlx::query_as::<_, User>("SELECT * FROM dal_security.lock_stale_user($1,$2)")
+            .bind(user_id)
+            .bind(older_than)
+            .fetch_optional(connection)
+            .await?,
+    )
 }
 
 pub async fn get_by_cognito_sub(pool: &PgPool, sub: &str) -> DalResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE cognito_sub = $1")
+    let user = sqlx::query_as::<_, User>("SELECT * FROM dal_security.auth_user('sub',$1)")
         .bind(sub)
         .fetch_optional(pool)
         .await?;
@@ -98,7 +99,7 @@ pub async fn get_public_by_username(
 ) -> DalResult<Option<UserPublic>> {
     let user = sqlx::query_as::<_, UserPublic>(
         "SELECT id, username, display_name, avatar_url, bio, website, created_at
-         FROM users WHERE lower(username) = lower($1)",
+         FROM dal_public_users WHERE lower(username) = lower($1)",
     )
     .bind(username)
     .fetch_optional(pool)
@@ -153,7 +154,7 @@ pub async fn delete_unverified(
 }
 
 pub async fn update_profile(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     user_id: Uuid,
     display_name: Option<&str>,
     bio: Option<&str>,
@@ -182,7 +183,7 @@ pub async fn update_profile(
 
 pub async fn username_exists(pool: &PgPool, username: &str) -> DalResult<bool> {
     let row: (bool,) =
-        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username) = lower($1))")
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM dal_security.auth_user('username',$1))")
             .bind(username)
             .fetch_one(pool)
             .await?;
@@ -191,7 +192,7 @@ pub async fn username_exists(pool: &PgPool, username: &str) -> DalResult<bool> {
 
 pub async fn email_exists(pool: &PgPool, email: &str) -> DalResult<bool> {
     let row: (bool,) =
-        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1))")
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM dal_security.auth_user('email',$1))")
             .bind(email)
             .fetch_one(pool)
             .await?;
@@ -206,18 +207,13 @@ pub async fn upsert_verification_token(
     kind: &str,
     expires_at: chrono::DateTime<chrono::Utc>,
 ) -> DalResult<()> {
-    sqlx::query(
-        "INSERT INTO verification_tokens (id, user_id, token_hash, kind, expires_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4)
-         ON CONFLICT (user_id, kind)
-         DO UPDATE SET token_hash = $2, expires_at = $4, used_at = NULL, created_at = now()",
-    )
-    .bind(user_id)
-    .bind(token_hash)
-    .bind(kind)
-    .bind(expires_at)
-    .execute(pool)
-    .await?;
+    sqlx::query("SELECT dal_security.issue_verification($1,$2,$3,$4)")
+        .bind(user_id)
+        .bind(token_hash)
+        .bind(kind)
+        .bind(expires_at)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -227,24 +223,19 @@ pub async fn consume_verification_token(
     token_hash: &str,
     kind: &str,
 ) -> DalResult<Option<Uuid>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "UPDATE verification_tokens
-         SET used_at = now()
-         WHERE token_hash = $1 AND kind = $2
-           AND used_at IS NULL AND expires_at > now()
-         RETURNING user_id",
+    Ok(
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT dal_security.consume_verification($1,$2)")
+            .bind(token_hash)
+            .bind(kind)
+            .fetch_one(pool)
+            .await?,
     )
-    .bind(token_hash)
-    .bind(kind)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|(id,)| id))
 }
 
 /// Fail closed if a previously enrolled account unexpectedly receives password-only tokens.
 pub async fn mfa_required(pool: &PgPool, user_id: Uuid) -> DalResult<bool> {
     Ok(
-        sqlx::query_scalar::<_, bool>("SELECT required FROM user_mfa WHERE user_id=$1")
+        sqlx::query_scalar::<_, bool>("SELECT dal_security.mfa_required($1)")
             .bind(user_id)
             .fetch_optional(pool)
             .await?
@@ -281,4 +272,25 @@ pub async fn lock_session(connection: &mut sqlx::PgConnection, user_id: Uuid) ->
         .bind(user_id)
         .fetch_one(connection)
         .await?)
+}
+
+pub async fn get_public_by_id(pool: &PgPool, id: Uuid) -> DalResult<Option<UserPublic>> {
+    Ok(sqlx::query_as("SELECT * FROM dal_public_users WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?)
+}
+
+/// Pre-authentication identity lookup only; ordinary account reads use get_by_id
+/// under RLS. Callers must first validate the JWT/token/hash capability.
+pub async fn auth_by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> DalResult<Option<User>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM dal_security.auth_user('id',$1::uuid::text)")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }

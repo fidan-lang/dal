@@ -104,6 +104,8 @@ def database(config):
     query = lambda url, sql: command(["psql", "-X", "-A", "-t", url, "-v", "ON_ERROR_STOP=1", "-c", sql], env)
     if query(target, "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'") != "0":
         raise ValueError("Restore target is not empty; nothing will be overwritten")
+    if query(target, "SELECT count(*) FROM pg_roles WHERE rolname IN ('dal_api','dal_worker') AND (has_database_privilege(rolname,current_database(),'CREATE') OR has_database_privilege(rolname,current_database(),'TEMP'))") != "0":
+        raise ValueError("Restore target must restrict runtime CREATE/TEMP privileges before restoration")
     migrations = query(source, "SELECT count(*) FROM _sqlx_migrations WHERE success")
     directory = ROOT / "target/staging-private"
     directory.mkdir(parents=True, exist_ok=True)
@@ -111,7 +113,7 @@ def database(config):
         dump = Path(temp) / "staging.dump"
         command(["pg_dump", source, "-Fc", "-f", str(dump)], env)
         dump.chmod(0o600)
-        command(["pg_restore", "--exit-on-error", "--no-owner", "--no-acl", "--dbname", target, str(dump)], env)
+        command(["pg_restore", "--exit-on-error", "--no-owner", "--dbname", target, str(dump)], env)
     if query(target, "SELECT count(*) FROM _sqlx_migrations WHERE success") != migrations:
         raise RuntimeError("Restored migration journal differs")
 

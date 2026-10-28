@@ -93,7 +93,7 @@ async fn challenge(
             return Err(error);
         }
     };
-    let user = queries::users::get_by_id(&state.db, pending.user_id)
+    let user = queries::users::auth_by_id(&state.db, pending.user_id)
         .await?
         .ok_or(DalError::Unauthorized)?;
     if !pending.valid_for(&user) {
@@ -156,7 +156,7 @@ async fn setup(
         ));
     }
     let _change = state.mfa.change()?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     let required = queries::users::lock_mfa(&mut tx, user.id).await?
         || state.cognito.totp_enabled(&user.username).await?;
     let tokens = reauthenticate(&state, &user, &body, required).await?;
@@ -201,7 +201,7 @@ async fn verify(
         return Err(DalError::Unauthorized);
     };
     let _change = state.mfa.change()?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     let was_required = queries::users::lock_mfa(&mut tx, user.id).await?;
     // Commit the downgrade barrier before Cognito can mutate the factor. If the
     // provider outcome is ambiguous, never silently allow password-only tokens.
@@ -209,7 +209,7 @@ async fn verify(
     tx.commit().await?;
     if !state.cognito.verify_totp(access, &body.code).await? {
         if !was_required && !state.cognito.totp_enabled(&user.username).await? {
-            let mut rollback = state.db.begin().await?;
+            let mut rollback = dal_db::actor_transaction(&state.db, user.id, None).await?;
             queries::users::lock_mfa(&mut rollback, user.id).await?;
             queries::users::set_mfa_required(&mut rollback, user.id, false).await?;
             rollback.commit().await?;
@@ -218,7 +218,7 @@ async fn verify(
         return Err(DalError::Unauthorized);
     }
     state.cognito.set_totp(access, true).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     queries::users::lock_mfa(&mut tx, user.id).await?;
     queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
     tx.commit().await?;
@@ -237,7 +237,7 @@ async fn disable(
     Json(body): Json<Reauthenticate>,
 ) -> Result<Json<Value>, DalError> {
     let _change = state.mfa.change()?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     let required = queries::users::lock_mfa(&mut tx, user.id).await?
         || state.cognito.totp_enabled(&user.username).await?;
     if !required {

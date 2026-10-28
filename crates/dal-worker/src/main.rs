@@ -28,6 +28,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connect to DB")?;
 
+    dal_db::verify_runtime(&db, "dal_worker").await?;
+
     let endpoint_url = std::env::var("DAL_SQS_ENDPOINT_URL")
         .ok()
         .filter(|s| !s.is_empty());

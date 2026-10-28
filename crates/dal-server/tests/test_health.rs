@@ -30,9 +30,9 @@ async fn unknown_route_returns_404() {
 #[tokio::test]
 async fn readyz_returns_unavailable_when_its_database_pool_is_closed() {
     use axum::{body::Body, http::Request};
-    use dal_server::{app::build_router, state::AppState};
+    use dal_server::app::build_router;
     use tower::ServiceExt;
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let state = common::build_state(&common::test_config()).await.unwrap();
     state.db.close().await;
     let response = build_router(state)
         .oneshot(

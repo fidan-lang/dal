@@ -5,11 +5,12 @@ use dal_server::{app::build_router, state::AppState};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-async fn fixture(state: &AppState) -> (Uuid, Uuid, String) {
+async fn fixture(_state: &AppState) -> (Uuid, Uuid, String) {
+    let owner = common::owner_database().await;
     let id = Uuid::new_v4();
     let name = format!("telemetry-{}", id.simple());
     queries::users::create(
-        &state.db,
+        &owner,
         id,
         &name,
         &format!("{name}@example.test"),
@@ -19,7 +20,7 @@ async fn fixture(state: &AppState) -> (Uuid, Uuid, String) {
     .await
     .unwrap();
     queries::packages::create(
-        &state.db,
+        &owner,
         queries::packages::NewPackage {
             id,
             name: &name,
@@ -35,7 +36,7 @@ async fn fixture(state: &AppState) -> (Uuid, Uuid, String) {
     .unwrap();
     let version = Uuid::new_v4();
     queries::versions::create(
-        &state.db,
+        &owner,
         queries::versions::NewPackageVersion {
             id: version,
             package_id: id,
@@ -59,7 +60,8 @@ async fn fixture(state: &AppState) -> (Uuid, Uuid, String) {
 
 #[tokio::test]
 async fn public_download_preserves_signed_access_without_caching_the_capability() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let owner = common::owner_database().await;
+    let state = common::build_state(&common::test_config()).await.unwrap();
     let (_, version, uri) = fixture(&state).await;
     let key = format!("test/download-contract/{version}.tar.gz");
     let payload = b"public package download fixture";
@@ -71,7 +73,7 @@ async fn public_download_preserves_signed_access_without_caching_the_capability(
     sqlx::query("UPDATE package_versions SET s3_key=$2 WHERE id=$1")
         .bind(version)
         .bind(&key)
-        .execute(&state.db)
+        .execute(&owner)
         .await
         .unwrap();
     // No bearer token, cookie or Origin is required for public package access.
@@ -118,7 +120,8 @@ async fn public_download_preserves_signed_access_without_caching_the_capability(
 
 #[tokio::test]
 async fn download_telemetry_ignores_spoofed_forwarding_and_caps_user_agent() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let owner = common::owner_database().await;
+    let state = common::build_state(&common::test_config()).await.unwrap();
     let (_, version, uri) = fixture(&state).await;
     let request = Request::builder()
         .uri(uri)
@@ -144,7 +147,7 @@ async fn download_telemetry_ignores_spoofed_forwarding_and_caps_user_agent() {
             "SELECT ip_hash,user_agent FROM download_logs WHERE version_id=$1",
         )
         .bind(version)
-        .fetch_optional(&state.db)
+        .fetch_optional(&owner)
         .await
         .unwrap();
         if result.is_some() {
@@ -164,20 +167,21 @@ async fn download_telemetry_ignores_spoofed_forwarding_and_caps_user_agent() {
     );
 }
 
-async fn counts(state: &AppState, package: Uuid, version: Uuid) -> (i64, i64, i64) {
+async fn counts(_state: &AppState, package: Uuid, version: Uuid) -> (i64, i64, i64) {
+    let owner = common::owner_database().await;
     let total: i64 = sqlx::query_scalar("SELECT downloads FROM packages WHERE id=$1")
         .bind(package)
-        .fetch_one(&state.db)
+        .fetch_one(&owner)
         .await
         .unwrap();
     let per_version: i64 = sqlx::query_scalar("SELECT downloads FROM package_versions WHERE id=$1")
         .bind(version)
-        .fetch_one(&state.db)
+        .fetch_one(&owner)
         .await
         .unwrap();
     let logs: i64 = sqlx::query_scalar("SELECT count(*) FROM download_logs WHERE version_id=$1")
         .bind(version)
-        .fetch_one(&state.db)
+        .fetch_one(&owner)
         .await
         .unwrap();
     (total, per_version, logs)
@@ -185,7 +189,7 @@ async fn counts(state: &AppState, package: Uuid, version: Uuid) -> (i64, i64, i6
 
 #[tokio::test]
 async fn saturated_accounting_drops_a_burst_without_blocking_downloads() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let state = common::build_state(&common::test_config()).await.unwrap();
     let (package, version, uri) = fixture(&state).await;
     let permits = state
         .accounting_slots
@@ -226,9 +230,10 @@ async fn saturated_accounting_drops_a_burst_without_blocking_downloads() {
 
 #[tokio::test]
 async fn slow_database_times_out_and_cancels_all_download_accounting() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let owner = common::owner_database().await;
+    let state = common::build_state(&common::test_config()).await.unwrap();
     let (package, version, uri) = fixture(&state).await;
-    let mut lock = state.db.begin().await.unwrap();
+    let mut lock = owner.begin().await.unwrap();
     sqlx::query("SELECT id FROM package_versions WHERE id=$1 FOR UPDATE")
         .bind(version)
         .execute(&mut *lock)
@@ -261,12 +266,13 @@ async fn slow_database_times_out_and_cancels_all_download_accounting() {
 
 #[tokio::test]
 async fn failed_database_accounting_rolls_back_both_counters_and_keeps_redirect() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let owner = common::owner_database().await;
+    let state = common::build_state(&common::test_config()).await.unwrap();
     let (package, version, uri) = fixture(&state).await;
     sqlx::query("UPDATE packages SET downloads=$1 WHERE id=$2")
         .bind(i64::MAX)
         .bind(package)
-        .execute(&state.db)
+        .execute(&owner)
         .await
         .unwrap();
     let response = build_router(state.clone())
@@ -279,9 +285,10 @@ async fn failed_database_accounting_rolls_back_both_counters_and_keeps_redirect(
 
 #[tokio::test]
 async fn forwarding_is_used_only_with_real_explicitly_trusted_peer() {
+    let owner = common::owner_database().await;
     let mut cfg = common::test_config();
     cfg.trusted_proxies = vec!["192.0.2.10".parse().unwrap()];
-    let state = AppState::build(&cfg).await.unwrap();
+    let state = common::build_state(&cfg).await.unwrap();
     for (peer, forwarded, expected) in [
         (None, "203.0.113.99", "unknown"),
         (Some("192.0.2.10:1234"), "203.0.113.99", "203.0.113.99"),
@@ -313,7 +320,7 @@ async fn forwarding_is_used_only_with_real_explicitly_trusted_peer() {
         let actual: String =
             sqlx::query_scalar("SELECT ip_hash FROM download_logs WHERE version_id=$1")
                 .bind(version)
-                .fetch_one(&state.db)
+                .fetch_one(&owner)
                 .await
                 .unwrap();
         assert_eq!(actual, dal_auth::api_token::hash_ip(expected));
@@ -322,7 +329,7 @@ async fn forwarding_is_used_only_with_real_explicitly_trusted_peer() {
 
 #[tokio::test]
 async fn cancellation_drops_accounting_work_and_releases_its_permit() {
-    let state = AppState::build(&common::test_config()).await.unwrap();
+    let state = common::build_state(&common::test_config()).await.unwrap();
     struct Cancelled(std::sync::Arc<std::sync::atomic::AtomicBool>);
     impl Drop for Cancelled {
         fn drop(&mut self) {
@@ -356,9 +363,10 @@ async fn cancellation_drops_accounting_work_and_releases_its_permit() {
 
 #[tokio::test]
 async fn stream_download_never_exposes_reusable_storage_credentials() {
+    let owner = common::owner_database().await;
     let mut cfg = common::test_config();
     cfg.public_reads.mode = dal_server::config::DownloadMode::Stream;
-    let state = AppState::build(&cfg).await.unwrap();
+    let state = common::build_state(&cfg).await.unwrap();
     let (_, version, uri) = fixture(&state).await;
     let key = format!("test/stream-contract/{version}.tar.gz");
     let payload = b"anonymous streamed package";
@@ -371,7 +379,7 @@ async fn stream_download_never_exposes_reusable_storage_credentials() {
         .bind(version)
         .bind(&key)
         .bind(payload.len() as i64)
-        .execute(&state.db)
+        .execute(&owner)
         .await
         .unwrap();
     let router = build_router(state.clone());
@@ -419,7 +427,7 @@ async fn public_read_limits_apply_without_an_account_and_cannot_be_spoofed() {
     let mut cfg = common::test_config();
     cfg.public_reads.download_requests_per_minute = 1;
     cfg.public_reads.metadata_requests_per_minute = 1;
-    let state = AppState::build(&cfg).await.unwrap();
+    let state = common::build_state(&cfg).await.unwrap();
     let (_, _, uri) = fixture(&state).await;
     let router = build_router(state);
     let first = router
@@ -488,10 +496,11 @@ async fn public_read_limits_apply_without_an_account_and_cannot_be_spoofed() {
 
 #[tokio::test]
 async fn streaming_holds_global_capacity_until_the_client_finishes_or_disconnects() {
+    let owner = common::owner_database().await;
     let mut cfg = common::test_config();
     cfg.public_reads.mode = dal_server::config::DownloadMode::Stream;
     cfg.public_reads.concurrent_downloads = 1;
-    let state = AppState::build(&cfg).await.unwrap();
+    let state = common::build_state(&cfg).await.unwrap();
     let (_, version, uri) = fixture(&state).await;
     let key = format!("test/admission/{version}.tar.gz");
     state
@@ -502,7 +511,7 @@ async fn streaming_holds_global_capacity_until_the_client_finishes_or_disconnect
     sqlx::query("UPDATE package_versions SET s3_key=$2 WHERE id=$1")
         .bind(version)
         .bind(&key)
-        .execute(&state.db)
+        .execute(&owner)
         .await
         .unwrap();
     let router = build_router(state.clone());
@@ -554,7 +563,7 @@ async fn streaming_holds_global_capacity_until_the_client_finishes_or_disconnect
 async fn concurrent_metadata_is_bounded_without_blocking_health_or_leaking_slots() {
     let mut cfg = common::test_config();
     cfg.public_reads.concurrent_metadata_requests = 1;
-    let state = AppState::build(&cfg).await.unwrap();
+    let state = common::build_state(&cfg).await.unwrap();
     let started = std::sync::Arc::new(tokio::sync::Notify::new());
     let release = std::sync::Arc::new(tokio::sync::Notify::new());
     let router = axum::Router::new()

@@ -27,6 +27,9 @@ function checkLocalRestore() {
   sql("dal_test", `
     INSERT INTO users (username,email,cognito_sub,email_verified,session_invalid_before)
       VALUES ('restore-audit','restore@example.test','restore-fixture',true,now());
+    INSERT INTO user_mfa(user_id,required) SELECT id,true FROM users;
+    INSERT INTO mfa_sessions(user_id,refresh_hash) SELECT id,repeat('c',64) FROM users;
+    INSERT INTO mfa_id_tokens(refresh_hash,token_hash,expires_at) VALUES(repeat('c',64),repeat('d',64),now()+interval '1 hour');
     INSERT INTO packages (name,license) VALUES ('restore-audit','Apache-2.0');
     INSERT INTO package_owners (package_id,user_id)
       SELECT p.id,u.id FROM packages p CROSS JOIN users u;
@@ -42,11 +45,15 @@ function checkLocalRestore() {
     'owners',(SELECT json_agg(o) FROM package_owners o),
     'tokens',(SELECT json_agg(t) FROM api_tokens t),
     'versions',(SELECT json_agg(v) FROM package_versions v),
-    'migrations',(SELECT json_agg(m ORDER BY version) FROM _sqlx_migrations m)
+    'migrations',(SELECT json_agg(m ORDER BY version) FROM _sqlx_migrations m),
+    'mfa_guard',(SELECT json_agg(g) FROM user_mfa g),
+    'mfa_sessions',(SELECT json_agg(s) FROM mfa_sessions s),
+    'mfa_id_tokens',(SELECT json_agg(t) FROM mfa_id_tokens t)
   )::text`;
   const before = sql("dal_test", snapshot);
   docker([...exec, "pg_dump", "-U", "dal_test", "-d", "dal_test", "-Fc", "-f", "/tmp/dal-audit.dump"]);
   docker([...exec, "createdb", "-U", "dal_test", "dal_restore_test"]);
+  sql("dal_restore_test", "REVOKE CREATE,TEMP ON DATABASE dal_restore_test FROM PUBLIC; GRANT CONNECT ON DATABASE dal_restore_test TO dal_api,dal_worker;");
   docker([...exec, "pg_restore", "--exit-on-error", "--no-owner", "-U", "dal_test", "-d", "dal_restore_test", "/tmp/dal-audit.dump"]);
   assert.deepEqual(JSON.parse(sql("dal_restore_test", snapshot)), JSON.parse(before));
   assert.equal(sql("dal_restore_test", "SELECT count(*) FROM users WHERE session_invalid_before IS NOT NULL"), "1");
@@ -64,6 +71,13 @@ function checkLocalRestore() {
     END;
   END $restore$`);
   assert.equal(sql("dal_restore_test", "SELECT count(*) FROM users"), "1");
+  const restored = statement => docker([...compose, "exec", "-T", "--env", "PGPASSWORD=test-api", "postgres-test", "psql",
+    "-h", "127.0.0.1", "-X", "-A", "-t", "-U", "dal_api", "-d", "dal_restore_test", "-v", "ON_ERROR_STOP=1", "-c", statement]);
+  assert.equal(restored("SELECT current_user"), "dal_api");
+  assert.equal(restored("SELECT count(*) FROM users"), "0", "Restored RLS must hide private accounts without context");
+  assert.equal(restored("SELECT count(*) FROM api_tokens"), "0");
+  assert.equal(restored("SELECT count(*) FROM mfa_sessions"), "0");
+  assert.equal(restored("SELECT count(*) FROM packages"), "1", "Restored grants must preserve public package discovery");
   console.log("Disposable PostgreSQL dump/restore preserved migrations, revocation cutoff, token scopes, ownership and yanked archive/checksum references; constraints enforce uniqueness.");
 }
 
@@ -95,6 +109,12 @@ try {
   }
   console.log("Local development port bindings stay on loopback; real environment files were not resolved.");
   docker([...compose, "up", "-d", "--wait", "--quiet-pull"]);
+  const serverImage = process.env.DAL_SERVER_IMAGE ?? "dal-server:audit-local";
+  docker(["run", "--rm", "--network", `${project}_default`, "--read-only", "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true", "--env", "DAL_MIGRATION_DATABASE_URL=postgres://dal_test:test@postgres-test:5432/dal_test",
+    serverImage, "--migrate"]);
+  docker([...compose, "exec", "-T", "postgres-test", "psql", "-U", "dal_test", "-d", "dal_test", "-v", "ON_ERROR_STOP=1",
+    "-c", "ALTER ROLE dal_api PASSWORD 'test-api'; ALTER ROLE dal_worker PASSWORD 'test-worker';"]);
   const environment = {
     AWS_ACCESS_KEY_ID: "test",
     AWS_SECRET_ACCESS_KEY: "test",
@@ -152,10 +172,13 @@ try {
       "1",
       "--env-file",
       envFile,
+      "--env", `DATABASE_URL=postgres://dal_${kind === "server" ? "api:test-api" : "worker:test-worker"}@postgres-test:5432/dal_test`,
       ...(kind === "server" ? ["--publish", "127.0.0.1::8080"] : []),
       process.env[`DAL_${kind.toUpperCase()}_IMAGE`] ?? `dal-${kind}:audit-local`,
     ]);
     assert.equal(docker(["exec", name, "id", "-u"]), "10001");
+    assert.equal(docker(["exec", "--user", "0", name, "find", "/", "-xdev", "-type", "f", "-perm", "/6000", "-print"]), "",
+      "Runtime image must not retain setuid/setgid tools");
     for (const packageName of ["curl", "libcurl4t64"]) {
       const installed = docker(["exec", name, "dpkg-query", "-W", "-f=${db:Status-Status}", packageName], [0, 1]);
       assert.notEqual(installed, "installed", `Unneeded vulnerable runtime package: ${packageName}`);

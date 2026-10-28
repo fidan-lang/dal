@@ -4,7 +4,7 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 pub async fn upsert(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     package_id: Uuid,
     invitee_id: Uuid,
     inviter_id: Uuid,
@@ -39,7 +39,7 @@ pub async fn upsert(
 }
 
 pub async fn list_pending_for_user(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     invitee_id: Uuid,
 ) -> DalResult<Vec<OwnershipInvite>> {
     let invites = sqlx::query_as::<_, OwnershipInvite>(
@@ -58,7 +58,7 @@ pub async fn list_pending_for_user(
 }
 
 pub async fn get_pending_for_user(
-    pool: &PgPool,
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,
     invitee_id: Uuid,
 ) -> DalResult<Option<OwnershipInvite>> {
@@ -83,7 +83,7 @@ pub async fn accept(
     id: Uuid,
     invitee_id: Uuid,
 ) -> DalResult<Option<OwnershipInvite>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::actor_transaction(pool, invitee_id, None).await?;
 
     let invite = sqlx::query_as::<_, OwnershipInvite>(
         "SELECT *
@@ -105,11 +105,11 @@ pub async fn accept(
         return Ok(None);
     };
 
-    sqlx::query("SELECT id FROM packages WHERE id=$1 FOR UPDATE")
+    sqlx::query("SELECT dal_security.lock_package($1)")
         .bind(invite.package_id)
         .fetch_one(&mut *tx)
         .await?;
-    let permitted: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM package_owners WHERE package_id=$1 AND user_id=$2 AND role='owner') OR EXISTS(SELECT 1 FROM users WHERE id=$2 AND is_admin=TRUE)")
+    let permitted: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM package_owners WHERE package_id=$1 AND user_id=$2 AND role='owner') OR EXISTS(SELECT 1 FROM dal_security.auth_user('id',$2::uuid::text) WHERE is_admin=TRUE AND email_verified=TRUE)")
         .bind(invite.package_id).bind(invite.inviter_id).fetch_one(&mut *tx).await?;
     if !permitted.0 {
         return Err(dal_common::error::DalError::Validation(
@@ -143,7 +143,11 @@ pub async fn accept(
     Ok(Some(accepted))
 }
 
-pub async fn decline(pool: &PgPool, id: Uuid, invitee_id: Uuid) -> DalResult<bool> {
+pub async fn decline(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    invitee_id: Uuid,
+) -> DalResult<bool> {
     let result = sqlx::query(
         "UPDATE owner_invites
          SET declined_at = now()
@@ -160,7 +164,10 @@ pub async fn decline(pool: &PgPool, id: Uuid, invitee_id: Uuid) -> DalResult<boo
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn pending_count_for_user(pool: &PgPool, invitee_id: Uuid) -> DalResult<i64> {
+pub async fn pending_count_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    invitee_id: Uuid,
+) -> DalResult<i64> {
     let row = sqlx::query(
         "SELECT COUNT(*) AS count
          FROM owner_invites

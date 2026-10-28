@@ -8,6 +8,16 @@ async fn main() -> anyhow::Result<()> {
     dotenv().ok();
     tracing_init::init();
 
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--migrate"] {
+        let address = std::env::var("DAL_MIGRATION_DATABASE_URL")
+            .context("owner-only DAL_MIGRATION_DATABASE_URL required")?;
+        let db = dal_db::connect(&address).await?;
+        dal_db::migrate(&db).await?;
+        info!("DAL owner-controlled migrations completed");
+        return Ok(());
+    }
+    anyhow::ensure!(arguments.is_empty(), "usage: dal-server [--migrate]");
     let cfg = dal_server::config::Config::from_env().context("load config")?;
     let state = dal_server::state::AppState::build(&cfg)
         .await

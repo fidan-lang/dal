@@ -25,7 +25,9 @@ async fn list_tokens(
     State(state): State<AppState>,
     VerifiedSession(user): VerifiedSession,
 ) -> Result<Json<Value>, DalError> {
-    let tokens = queries::tokens::list_for_user(&state.db, user.id).await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    let tokens = queries::tokens::list_for_user(&mut *tx, user.id).await?;
+    tx.commit().await?;
     Ok(Json(serde_json::to_value(&tokens).unwrap_or_default()))
 }
 
@@ -41,6 +43,7 @@ async fn create_token(
     VerifiedSession(user): VerifiedSession,
     Json(body): Json<CreateTokenBody>,
 ) -> Result<(StatusCode, Json<Value>), DalError> {
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     if body.name.trim().is_empty() || body.name.len() > 64 {
         return Err(DalError::Validation("token name must be 1–64 chars".into()));
     }
@@ -53,7 +56,7 @@ async fn create_token(
         .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64));
 
     let token_record = queries::tokens::create(
-        &state.db,
+        &mut *tx,
         user.id,
         body.name.trim(),
         &hash,
@@ -63,6 +66,7 @@ async fn create_token(
     )
     .await?;
 
+    tx.commit().await?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -77,9 +81,11 @@ async fn delete_token(
     VerifiedSession(user): VerifiedSession,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, DalError> {
-    let deleted = queries::tokens::delete(&state.db, id, user.id).await?;
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    let deleted = queries::tokens::delete(&mut *tx, id, user.id).await?;
     if !deleted {
         return Err(DalError::Validation("token not found".into()));
     }
+    tx.commit().await?;
     Ok(Json(json!({ "message": "token deleted" })))
 }

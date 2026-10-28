@@ -21,6 +21,12 @@ cd dal
 docker compose up postgres -d
 ```
 
+Before starting the API or worker, apply the controlled local migration and
+provision the separate runtime roles as described in
+[database roles and RLS](deploy/database-roles.md). Normal startup no longer
+migrates using an owner credential.
+
+
 ### 3. Build the workspace
 
 ```bash

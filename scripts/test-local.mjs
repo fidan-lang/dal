@@ -106,7 +106,7 @@ for (const [key, value] of Object.entries(env))
     /^(https?:)/.test(value)
   )
     localTestEndpoint(value, key);
-function start(command, args, cwd, name) {
+function start(command, args, cwd, name, childEnv = env) {
   const fd = openSync(path.join(logs, `${name}.log`), "w");
   // npm.cmd needs a command host on Windows; command strings here are fixed constants.
   const child =
@@ -114,11 +114,11 @@ function start(command, args, cwd, name) {
       ? spawn(
           process.env.ComSpec ?? "cmd.exe",
           ["/d", "/s", "/c", `npm ${args.join(" ")}`],
-          { cwd, env, stdio: ["ignore", fd, fd], windowsHide: true },
+          { cwd, env: childEnv, stdio: ["ignore", fd, fd], windowsHide: true },
         )
       : spawn(command, args, {
           cwd,
-          env,
+          env: childEnv,
           stdio: ["ignore", fd, fd],
           windowsHide: true,
           detached: process.platform !== "win32",
@@ -311,12 +311,14 @@ try {
       [],
       scratch,
       "local-api",
+      { ...env, DATABASE_URL: "postgres://dal_api:test-api@127.0.0.1:5433/dal_test" },
     );
     start(
       path.join(root, "target/debug", `dal-worker${suffix}`),
       [],
       scratch,
       "local-worker",
+      { ...env, DATABASE_URL: "postgres://dal_worker:test-worker@127.0.0.1:5433/dal_test" },
     );
     await ready("http://127.0.0.1:18080/readyz", api);
     await run(

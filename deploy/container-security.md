@@ -52,7 +52,12 @@ affected API against actual `ldd` output and application call paths. DAL's Rust
 archive handling does not launch system gzip/perl/tar/mount utilities; this reduces
 some paths but does not make all installed OS vulnerabilities harmless. Non-root,
 read-only, cap-drop and no-new-privileges mitigate local privilege escalation;
-they do not remediate libc or other remotely reachable defects. Keep every raw
+they do not remediate libc or other remotely reachable defects. The runtime now
+strips all setuid/setgid bits after package installation; package metadata and raw
+scanner findings remain intact. Both production executables/health probes run
+without those bits. This is mitigation, not a claim that the affected OS packages
+were patched. Publication is restricted to natively accepted linux/amd64 images;
+ARM64 remains disabled until its actual image acceptance is executed. Keep every raw
 finding, including inactive optional Rust lockfile advisories, visible separately.
 No source change constitutes residual-risk acceptance.
 
