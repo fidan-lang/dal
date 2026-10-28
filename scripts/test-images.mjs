@@ -81,6 +81,12 @@ function checkLocalRestore() {
   console.log("Disposable PostgreSQL dump/restore preserved migrations, revocation cutoff, token scopes, ownership and yanked archive/checksum references; constraints enforce uniqueness.");
 }
 
+function parseDynamicImports(symbols) {
+  return [...new Set([...symbols.matchAll(/\bUND[ \t]+([^\s@]+)/g)].map(match => match[1]))].sort();
+}
+// ELF's empty symbol zero must not consume the following line's numeric index.
+assert.deepEqual(parseDynamicImports("0: 0000 0 NOTYPE LOCAL DEFAULT UND \n  1: 0000 0 FUNC GLOBAL DEFAULT UND malloc@GLIBC_2.2.5"), ["malloc"]);
+
 function docker(args, allowed = [0]) {
   const result = spawnSync("docker", args, {
     cwd: root,
@@ -267,7 +273,7 @@ try {
       "--security-opt", "no-new-privileges:true", "--memory", "128m", "--cpus", "1", "--pids-limit", "32",
       "--mount", `type=bind,source=${scratch},target=/evidence,readonly`, "--entrypoint", "/usr/bin/readelf",
       inspector, "--wide", "--dyn-syms", `/evidence/dal-${kind}`]);
-    const dynamicImports = [...new Set([...symbols.matchAll(/\bUND\s+([^\s@]+)/g)].map(match => match[1]))].sort();
+    const dynamicImports = parseDynamicImports(symbols);
     assert(dynamicImports.includes("__libc_start_main"), "Must inspect actual ELF imports, not an empty report");
     summary.push({
       kind,
