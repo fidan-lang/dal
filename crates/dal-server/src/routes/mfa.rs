@@ -211,7 +211,11 @@ async fn verify(
         if !was_required && !state.cognito.totp_enabled(&user.username).await? {
             let mut rollback = dal_db::actor_transaction(&state.db, user.id, None).await?;
             queries::users::lock_mfa(&mut rollback, user.id).await?;
-            queries::users::set_mfa_required(&mut rollback, user.id, false).await?;
+            let current = queries::users::lock_session(&mut rollback, user.id).await?;
+            // A delayed provider read must not undo a completed concurrent change.
+            if pending.valid_for(&current) {
+                queries::users::set_mfa_required(&mut rollback, user.id, false).await?;
+            }
             rollback.commit().await?;
         }
         state.mfa.retry(&handle, pending);
@@ -220,6 +224,8 @@ async fn verify(
     state.cognito.set_totp(access, true).await?;
     let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     queries::users::lock_mfa(&mut tx, user.id).await?;
+    // An earlier failed verification may have rolled back its provisional guard.
+    queries::users::set_mfa_required(&mut tx, user.id, true).await?;
     queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
     tx.commit().await?;
     state.mfa.revoke(user.id);

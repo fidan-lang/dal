@@ -74,7 +74,9 @@ existing pool is expected to remain `MfaConfiguration=OFF` until operator approv
    and authenticated disable must stay supported. Do NOT set the pool OFF or roll
    back to a server that cannot process MFA once any user enrolls. Keep the database
    downgrade guard. Enrollment commits its downgrade guard before provider verification. Definite
-   invalid-code responses restore previously disabled enrollment; ambiguous provider
+   invalid-code responses restore previously disabled enrollment only while its
+   session epoch is unchanged; a delayed response cannot undo a completed concurrent
+   enrollment. Successful enrollment reasserts the guard atomically with revocation. Ambiguous provider
    failures retain the guard and can require operator reconciliation. Provider/DB
    partial failures fail closed; reconcile account
    preference and the durable guard under an approved incident procedure.

@@ -127,6 +127,7 @@ fn isolation_rejects_remote_service_endpoints() {
 pub struct TestApp {
     cognito: std::sync::Arc<dal_auth::CognitoClient>,
     pub publish_slots: std::sync::Arc<tokio::sync::Semaphore>,
+    pub mfa: std::sync::Arc<dal_server::mfa::PendingMfa>,
     router: axum::Router,
 }
 
@@ -175,6 +176,7 @@ impl TestApp {
         TestApp {
             cognito: state.cognito.clone(),
             publish_slots: state.publish_slots.clone(),
+            mfa: state.mfa.clone(),
             router: build_router(state),
         }
     }
