@@ -1,0 +1,39 @@
+{
+  "account": "418892985224",
+  "region": "eu-central-1",
+  "anchor_name": "dal-vps-root-2026",
+  "issuer_cn": "DAL VPS Root CA 2026",
+  "subject_ou": "DAL production",
+  "session_seconds": 900,
+  "certificate_days": 90,
+  "ca_years": 5,
+  "workloads": {
+    "api": {
+      "cn": "dal-api",
+      "profile": "dal-vps-api",
+      "role": "DalServerTaskRole"
+    },
+    "worker": {
+      "cn": "dal-worker",
+      "profile": "dal-vps-worker",
+      "role": "DalWorkerTaskRole"
+    }
+  },
+  "queue_name": "dal-jobs.fifo",
+  "dlq_name": "dal-jobs-dlq.fifo",
+  "dlq_retention_seconds": 1209600,
+  "max_receive_count": 5,
+  "alarm_name": "dal-jobs-dlq-visible",
+  "helper": {
+    "version": "1.8.5",
+    "linux_amd64": {
+      "url": "https://rolesanywhere.amazonaws.com/releases/1.8.5/X86_64/Linux/Amzn2023/aws_signing_helper",
+      "sha256": "beec9ed1c492d93db809890f16713e3556353294b823c2184ad4e891f1b2b54d"
+    },
+    "windows_amd64": {
+      "url": "https://rolesanywhere.amazonaws.com/releases/1.8.5/X86_64/Windows/Server2022/aws_signing_helper.exe",
+      "sha256": "fc4c3e65864c1829fcd87ae3718387db03b8ea48b8819f5a6031482ba5d243cd"
+    }
+  },
+  "user_pool_id": "eu-central-1_jwb4G0SvF"
+}

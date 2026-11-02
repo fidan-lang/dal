@@ -1,0 +1,47 @@
+# Optional external-VPS override; combine with compose.production.yaml.
+# Directories must contain only this workload's config, certificate and key.
+services:
+  server:
+    environment:
+      AWS_PROFILE: dal-vps-api
+      AWS_CONFIG_FILE: /run/dal-aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_EC2_METADATA_DISABLED: "true"
+      # The SDK treats blank access keys as absent. Prevent env_file credentials
+      # from taking precedence over this workload's credential_process profile.
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SESSION_TOKEN: ""
+    volumes:
+      - type: bind
+        source: ${DAL_AWS_HELPER:?verified Linux AMD64 signing helper required}
+        target: /opt/aws-rolesanywhere/aws_signing_helper
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${DAL_API_AWS_DIRECTORY:?API-only credentials directory required}
+        target: /run/dal-aws
+        read_only: true
+        bind: { create_host_path: false }
+  worker:
+    environment:
+      AWS_PROFILE: dal-vps-worker
+      AWS_CONFIG_FILE: /run/dal-aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_EC2_METADATA_DISABLED: "true"
+      # The SDK treats blank access keys as absent. Prevent env_file credentials
+      # from taking precedence over this workload's credential_process profile.
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SESSION_TOKEN: ""
+    volumes:
+      - type: bind
+        source: ${DAL_AWS_HELPER:?verified Linux AMD64 signing helper required}
+        target: /opt/aws-rolesanywhere/aws_signing_helper
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${DAL_WORKER_AWS_DIRECTORY:?worker-only credentials directory required}
+        target: /run/dal-aws
+        read_only: true
+        bind: { create_host_path: false }
