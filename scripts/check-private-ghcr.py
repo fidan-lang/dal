@@ -10,7 +10,8 @@ import urllib.request
 
 ORGANIZATION = "fidan-lang"
 REPOSITORY = "fidan-lang/dal"
-PACKAGES = ("dal-server", "dal-worker")
+PACKAGES = ("dal/server", "dal/worker")
+OWNER = "AppSolves"
 ENVIRONMENT = "ghcr-release"
 
 
@@ -23,13 +24,26 @@ def validate_package(value, name):
 def validate_environment(value, branches):
     rules = value.get("protection_rules", [])
     reviews = [r for r in rules if r.get("type") == "required_reviewers"]
-    if value.get("can_admins_bypass") is not False or not any(r.get("prevent_self_review") is True and r.get("reviewers") for r in reviews):
-        raise ValueError("Release environment requires independent reviewers, no self-review and no admin bypass")
-    if (value.get("deployment_branch_policy") or {}).get("custom_branch_policies") is not True:
+    if value.get("name") != ENVIRONMENT or value.get("can_admins_bypass") is not False or len(reviews) != 1:
+        raise ValueError("ghcr-release requires explicit owner approval and no admin bypass")
+    reviewers = reviews[0].get("reviewers", [])
+    if (reviews[0].get("prevent_self_review") is not False or len(reviewers) != 1
+            or reviewers[0].get("type") != "User"
+            or reviewers[0].get("reviewer", {}).get("login") != OWNER):
+        raise ValueError("AppSolves must be the sole required reviewer; owner self-approval must be enabled")
+    if ((value.get("deployment_branch_policy") or {}).get("custom_branch_policies") is not True
+            or (value.get("deployment_branch_policy") or {}).get("protected_branches") is not False):
         raise ValueError("Explicit main-only environment branch policy required")
     policies = branches.get("branch_policies", [])
     if len(policies) != 1 or policies[0].get("name") != "main" or policies[0].get("type") != "branch":
         raise ValueError("Release environment must allow only the main branch, never arbitrary tags/branches")
+
+
+def validate_owner(membership, owners):
+    if membership.get("role") != "admin" or membership.get("state") != "active":
+        raise ValueError("AppSolves must be an active organization owner")
+    if len(owners) != 1 or owners[0].get("login") != OWNER:
+        raise ValueError("The release policy requires AppSolves as the sole organization owner")
 
 
 def validate_access_review(review, ids):
@@ -105,23 +119,15 @@ def main():
     environment = api(f"repos/{REPOSITORY}/environments/{ENVIRONMENT}", token)
     branches = api(f"repos/{REPOSITORY}/environments/{ENVIRONMENT}/deployment-branch-policies", token)
     validate_environment(environment, branches)
-    for rule in environment["protection_rules"]:
-        if rule.get("type") != "required_reviewers":
-            continue
-        for reviewer in rule["reviewers"]:
-            login = reviewer.get("reviewer", {}).get("login")
-            if reviewer.get("type") != "User" or not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]+", login):
-                raise ValueError("Release reviewers must be individually verified organization owners")
-            membership = api(f"orgs/{ORGANIZATION}/memberships/{login}", token)
-            if membership.get("role") != "admin" or membership.get("state") != "active":
-                raise ValueError("Every release-environment reviewer must be an active organization owner")
+    validate_owner(api(f"orgs/{ORGANIZATION}/memberships/{OWNER}", token),
+                   api(f"orgs/{ORGANIZATION}/members?role=admin&per_page=2", token))
     packages = []
     for name in PACKAGES:
-        base = f"orgs/{ORGANIZATION}/packages/container/{name}"
+        base = f"orgs/{ORGANIZATION}/packages/container/{urllib.parse.quote(name, safe='')}"
         value = api(base, token)
         identity = validate_package(value, name)
         versions = api(base + "/versions?per_page=1", token)
-        digest = options.digest if name == "dal-" + str(options.target) else (versions[0].get("name") if versions else None)
+        digest = options.digest if name == "dal/" + str(options.target) else (versions[0].get("name") if versions else None)
         if not isinstance(digest, str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
             raise ValueError("An existing immutable package version is required before publication; no implicit package creation")
         anonymous_denied(name, digest)

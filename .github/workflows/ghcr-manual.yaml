@@ -52,7 +52,7 @@ jobs:
           # Enable another architecture only after its actual image acceptance passes.
           platforms: linux/amd64
           push: ${{ inputs.publish }}
-          tags: ghcr.io/fidan-lang/dal-${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          tags: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           # Do not auto-link private packages to the public source repository.
           labels: org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
@@ -81,7 +81,7 @@ jobs:
         env:
           IMAGE_TARGET: ${{ matrix.target }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-        run: docker pull --platform linux/amd64 "ghcr.io/fidan-lang/dal-$IMAGE_TARGET@$IMAGE_DIGEST"
+        run: docker pull --platform linux/amd64 "ghcr.io/fidan-lang/dal/$IMAGE_TARGET@$IMAGE_DIGEST"
       - name: Preserve visibility and rollback identity receipts
         if: always() && inputs.publish
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

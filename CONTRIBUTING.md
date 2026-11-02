@@ -289,17 +289,21 @@ SPDX `Apache-2.0`; the standard license file remains included in package archive
 ## Private image release requirements
 
 Image publication is manual, main-only and requires the protected `ghcr-release`
-environment with independent reviewers, no self-review/admin bypass and a main-only
-branch rule. Neither PRs nor ordinary pushes publish images. Dry builds do not log
-in to GHCR. `scripts/check-private-ghcr.py` fails before publication if existing
+environment with `AppSolves` as the sole required reviewer, owner self-approval
+enabled (`prevent_self_review=false`), administrator bypass disabled
+(`can_admins_bypass=false`) and a main-only branch rule. `AppSolves` must be the
+sole active organization owner. Neither PRs nor ordinary pushes publish images.
+Dry builds do not log in to GHCR. `scripts/check-private-ghcr.py` fails before publication if existing
 package PRIVATE visibility, anonymous denial or environment protection is unconfirmed.
 It never creates packages or changes visibility. A missing package therefore blocks
-first publication; any administrator bootstrap needs separate approval.
+first publication; the [metadata-only bootstrap](deploy/container-security.md#first-private-package-bootstrap)
+needs separate approval and must never upload DAL binaries.
 
 Before approving a release, the organization owner must:
 
-- Confirm **both** packages are PRIVATE; disable repository access inheritance and
-  review direct users, teams, Actions and Codespaces access. Permit only the owner
+- Confirm **both** `dal/server` and `dal/worker` packages are PRIVATE; disable
+  repository access inheritance and review direct users, teams, Actions and
+  Codespaces access. Permit only the owner
   and named build/deployment principals. Public source access must confer no image access.
 - Configure environment-only `GHCR_VISIBILITY_TOKEN` (read-only inspection),
   `GHCR_PUBLISH_TOKEN` (dedicated publisher, only required package write access),
