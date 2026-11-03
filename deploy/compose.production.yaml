@@ -1,5 +1,6 @@
 # Review-only candidate: existing Neon/R2/Cognito/SQS/Mailjet, no local production DB.
-# Set immutable GHCR image references including @sha256 after owner-approved publication.
+# Use ghcr.io/fidan-lang/dal/server@sha256:... for DAL_SERVER_IMAGE and
+# ghcr.io/fidan-lang/dal/worker@sha256:... for DAL_WORKER_IMAGE after approval.
 services:
   server:
     image: ${DAL_SERVER_IMAGE:?approved immutable server image required}

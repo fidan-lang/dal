@@ -294,7 +294,8 @@ Copyright © 2026 Kaan Gönüldinc (AppSolves)
 
 ## Release and image policy
 
-Official prebuilt `ghcr.io/fidan-lang/dal-server` and `dal-worker` images must remain
+Official prebuilt `ghcr.io/fidan-lang/dal/server` and
+`ghcr.io/fidan-lang/dal/worker` images must remain
 **private**, with no anonymous pulls or inherited public-repository access. The
 Apache-2.0 source remains available for independent builds and hosting.
 See [private image release requirements](CONTRIBUTING.md#private-image-release-requirements).

@@ -95,7 +95,7 @@ production. Container source review/merging is separate from deployment approval
 
 ## Owner-only GHCR checklist (before any publication)
 
-1. Independently inspect **both** `dal-server` and `dal-worker` packages in the
+1. Inspect **both** `dal/server` and `dal/worker` container packages in the
    organization: visibility must explicitly be **Private**. An API 404 proves
    neither existence nor private access. If packages do not exist or cannot be
    inspected, stop; initial private package provisioning needs separate approval.
@@ -104,8 +104,12 @@ production. Container source review/merging is separate from deployment approval
    deployment principals should have access. Public source read access must never
    imply image pull access. Keep automatic public-repository source linkage and
    public build caches out of the image publication path.
-3. Configure the `ghcr-release` environment for main only, independent active
-   organization-owner review, no self-review and no administrator bypass. Review
+3. Configure `ghcr-release` with `AppSolves` as the sole required reviewer and
+   sole active organization owner. Enable owner self-approval with
+   `prevent_self_review=false`; retain `can_admins_bypass=false`. Use a custom
+   deployment branch policy containing only `main` of type `branch`, not a tag
+   or wildcard. Owner approval is still required; self-approval is not an admin
+   bypass. Review
    dedicated package-read inspection, minimum publish and read-only deployment-pull
    credentials without copying their values into issues or reports. Record the
    exact package-ID-bound `GHCR_PRIVATE_ACCESS_REVIEW` attestation only after ACL
@@ -121,3 +125,87 @@ production. Container source review/merging is separate from deployment approval
 Production approval additionally requires current CVE disposition, real provider
 TLS/IAM canaries (Cognito, PostgreSQL, SQS, R2 and Mailjet), backup/restore and
 monitoring on the intended host. Local emulators do not verify those settings.
+
+
+## First private package bootstrap
+
+Canonical registry references are `ghcr.io/fidan-lang/dal/server` and
+`ghcr.io/fidan-lang/dal/worker`. GitHub Packages REST identifies them as
+`dal%2Fserver` and `dal%2Fworker` in the package-name path segment, for example:
+
+```text
+GET /orgs/fidan-lang/packages/container/dal%2Fserver
+GET /orgs/fidan-lang/packages/container/dal%2Fworker/versions
+```
+
+The OCI registry paths keep their slashes (`/v2/fidan-lang/dal/server/...`).
+Do not rename the Rust binaries or local development image tags to match a REST
+path. Do not reuse the old flat registry package names.
+
+The normal release guard requires existing PRIVATE packages with immutable
+versions. It deliberately cannot create a package to discover its visibility.
+Bootstrap is a separate, explicitly owner-approved registry operation:
+
+1. Authenticate with package-inspection rights and establish whether each exact
+   package exists. A 404 without sufficient access does not establish absence.
+   If a package exists, inspect its visibility, versions and ACL instead of
+   overwriting it or changing visibility automatically.
+2. The owner verifies organization package-creation permissions and automatic
+   inheritance. Permit only private creation for the approved non-owner bootstrap
+   principal, where applicable; organization-owner privileges are broader.
+   GitHub documents initial GHCR visibility as private, but that default alone
+   does not authorize uploading DAL payloads. Never temporarily make either
+   package public.
+3. Build the metadata-only reservation locally. It contains no DAL binary,
+   filesystem layers, executable command, credentials or repository source label:
+
+   ```sh
+   docker build --platform linux/amd64 --network none --provenance=false \
+     -f deploy/ghcr-bootstrap.Dockerfile -t dal-ghcr-private-bootstrap:local .
+   ```
+
+4. Only after separate bootstrap approval, authenticate the approved publisher
+   with `--password-stdin` using a token supplied securely, never a token literal
+   or a command-line password. For each confirmed-absent package, publish a unique
+   bootstrap tag using the same metadata-only image:
+
+   ```sh
+   docker tag dal-ghcr-private-bootstrap:local ghcr.io/fidan-lang/dal/server:bootstrap-private-UNIQUE
+   docker tag dal-ghcr-private-bootstrap:local ghcr.io/fidan-lang/dal/worker:bootstrap-private-UNIQUE
+   docker push ghcr.io/fidan-lang/dal/server:bootstrap-private-UNIQUE
+   docker push ghcr.io/fidan-lang/dal/worker:bootstrap-private-UNIQUE
+   ```
+
+   Replace `UNIQUE` before use; never overwrite an existing tag. Do not run these
+   commands merely to test credentials, and never substitute a DAL runtime image.
+5. Read both encoded package endpoints and version lists. Explicit PRIVATE
+   visibility, real immutable digests, anonymous manifest denial and authorized
+   read-only pulls must be verified before any DAL runtime upload. Stop if these
+   cannot be established; do not open anonymous access to make verification pass.
+6. Review direct users, teams, Actions/Codespaces access and repository inheritance
+   for both actual package IDs. Restrict access to the owner and explicitly
+   authorized publisher/read-only deployment principals. Retain the bootstrap
+   version so the unchanged normal prepublication gate has a version to inspect.
+
+Configure these values in the protected `ghcr-release` environment:
+
+| Kind | Name | Requirement |
+| --- | --- | --- |
+| Secret | `GHCR_VISIBILITY_TOKEN` | Package-read inspection, organization-owner membership inspection and environment-read access; `read:packages` and applicable organization/repository permissions. |
+| Secret | `GHCR_PUBLISH_TOKEN` | Approved publisher with only required package-write access. |
+| Secret | `GHCR_PULL_TOKEN` | Deployment reader with `read:packages`, no package-write/delete scope. |
+| Variable | `GHCR_PUBLISH_USER` | Login belonging to the publisher token. |
+| Variable | `GHCR_PULL_USER` | Login belonging to the deployment reader token. |
+| Variable | `GHCR_PRIVATE_ACCESS_REVIEW` | `PRIVATE_ACCESS_REVIEWED:<server-package-id>:<worker-package-id>`, in that order, only after reviewing the actual ACLs. |
+
+After bootstrap and a separate DAL-image publication approval, use the existing
+manual `ghcr-manual.yaml` workflow on `main`, with `publish=true` and
+`confirmation=PUBLISH_APPROVED_GHCR`. `AppSolves` can approve the environment even
+when initiating that release. The guard additionally verifies active owner
+membership and that the organization has exactly that one owner. No PR or ordinary
+push publishes images. Keep current image-bound CVE assessment, SBOM/provenance,
+private-access checks and digest-pinned rollback evidence; bootstrap and owner
+self-approval do not accept outstanding vulnerabilities or authorize deployment.
+
+References: [GHCR publication and initial visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+[package creation, inheritance and access](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
