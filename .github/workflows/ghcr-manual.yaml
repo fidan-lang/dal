@@ -22,6 +22,11 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      IMAGE_ARCHIVE: target/dal-${{ matrix.target }}.oci.tar
+      IMAGE_TARGET: ${{ matrix.target }}
+      IMAGE_LOCAL: dal-release:${{ matrix.target }}
+      IMAGE_TAG: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     strategy:
       matrix:
         target: [server, worker]
@@ -44,6 +49,11 @@ jobs:
           registry: ghcr.io
           username: ${{ vars.GHCR_PUBLISH_USER }}
           password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+      - name: Install OCI copy tooling
+        run: |
+          mkdir -p target
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y skopeo
       - id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -51,7 +61,8 @@ jobs:
           target: ${{ matrix.target }}
           # Enable another architecture only after its actual image acceptance passes.
           platforms: linux/amd64
-          push: ${{ inputs.publish }}
+          push: false
+          outputs: type=oci,dest=${{ env.IMAGE_ARCHIVE }},compression=gzip
           tags: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           # Do not auto-link private packages to the public source repository.
           labels: org.opencontainers.image.licenses=Apache-2.0
@@ -59,6 +70,15 @@ jobs:
           sbom: true
           # Public-repository Actions caches are readable by fork PRs.
           # Keep private image layers inside the ephemeral builder.
+      - name: Verify release runtime before any registry push
+        run: |
+          skopeo --override-os linux --override-arch amd64 copy "oci-archive:$IMAGE_ARCHIVE" "docker-daemon:$IMAGE_LOCAL"
+          python3 scripts/check-release-image.py --target "$IMAGE_TARGET" --image "$IMAGE_LOCAL" --archive "$IMAGE_ARCHIVE" --receipt target/private-ghcr-runtime.json
+      - name: Publish only the verified OCI archive with all attestations
+        if: inputs.publish
+        run: |
+          python3 -c 'import json,os; r=json.load(open("target/private-ghcr-runtime.json")); print(r["archive_sha256"] + "  " + os.environ["IMAGE_ARCHIVE"])' | sha256sum --check
+          skopeo copy --all --preserve-digests --authfile "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "oci-archive:$IMAGE_ARCHIVE" "docker://$IMAGE_TAG"
       - name: Verify actual published visibility and immutable digest
         if: inputs.publish
         env:

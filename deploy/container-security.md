@@ -209,3 +209,27 @@ self-approval do not accept outstanding vulnerabilities or authorize deployment.
 
 References: [GHCR publication and initial visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
 [package creation, inheritance and access](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+
+## Image-bound private-publication acceptance
+
+`config/container-release-acceptance.json` records the owner's 2026-11-03
+acceptance of the 17 listed glibc residuals, for private publication only, against
+the two reviewed Linux AMD64 OCI identities. It does not accept other CVEs or
+approve deployment. Existing per-CVE dispositions remain applicable only while
+the relevant runtime payload stays equivalent.
+
+The manual workflow exports an OCI archive locally, imports only its native
+manifest for inspection, and compares all installed package versions, native
+libraries, DAL/healthcheck binaries, relevant image configuration and privilege
+bits before any registry write. A difference blocks publication and requires
+review of the changed exposure. The exact verified archive is then copied with
+`--all --preserve-digests`, retaining SBOM/provenance; it is never rebuilt between
+verification and push. The original PRIVATE/ACL/environment/owner checks and
+read-only pull verification remain mandatory. Image tarballs are not uploaded
+to public Actions artifacts.
+
+Deployment remains separately gated: retain UID/GID 10001, read-only root and
+credential/helper mounts, cap-drop ALL, no-new-privileges and resource limits.
+Enforce `LC_ALL=C` and `LANGUAGE=C`, exclude unreviewed loader/locale overrides,
+and verify the actual host/container DNS/search configuration and `LOCALDOMAIN`.
+No deployment configuration or production approval follows from this acceptance.
