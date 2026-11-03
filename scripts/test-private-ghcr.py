@@ -45,7 +45,7 @@ class PrivateImages(unittest.TestCase):
         self.assertEqual(build["with"]["platforms"], "linux/amd64")
         self.assertTrue(build["with"]["tags"].startswith("ghcr.io/fidan-lang/dal/${{ matrix.target }}:"))
         self.assertNotIn("org.opencontainers.image.source", build["with"]["labels"])
-        self.assertEqual(build["with"]["push"], "${{ inputs.publish }}")
+        self.assertIs(build["with"]["push"], False)
         self.assertNotIn("cache-to", build["with"])
         self.assertNotIn("cache-from", build["with"])
         pull = next(step for step in steps if step.get("name") == "Verify authorized immutable pull")

@@ -209,3 +209,40 @@ self-approval do not accept outstanding vulnerabilities or authorize deployment.
 
 References: [GHCR publication and initial visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
 [package creation, inheritance and access](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+
+## Protected runtime acceptance
+
+The manual release requires `GHCR_RUNTIME_ACCEPTANCE`, an environment secret in
+`ghcr-release` containing the exact owner-approved JSON contract. No acceptance
+file, vulnerability list, binary hash or runtime fingerprint belongs in this
+repository. Ordinary PR/CI tests use synthetic fixtures and need no production
+secret. Missing or invalid acceptance fails before the expensive image build.
+
+One-time setup, run locally with the existing approved file stored outside Git:
+
+```sh
+gh secret set GHCR_RUNTIME_ACCEPTANCE --repo fidan-lang/dal --env ghcr-release < /secure/path/container-release-acceptance.json
+```
+
+Use stdin, never a literal secret argument or a pasted chat message. Retain the
+existing environment reviewer, main-only policy and package-ACL attestation.
+Changing the contract requires a new owner decision for any changed exposure.
+
+The workflow builds a local OCI archive and compares package versions, native
+libraries, application binaries, image configuration and privilege bits before
+any push. It then copies the exact verified archive with all attestations and
+preserved digests. No rebuild occurs between verification and publication. The
+existing PRIVATE/ACL/owner gates and dedicated read-only pull remain mandatory.
+
+The secret is scoped to validation/verification steps and removed from the
+verifier environment before child processes. The local transport receipt contains
+no acceptance IDs or runtime fingerprints, is excluded from public artifact
+uploads, and is deleted with the private archive at job completion. Public build-record uploads/summaries and per-blob copy logs are disabled; SBOM
+and provenance remain inside the private OCI image. Detailed security evidence
+remains in the private owner handoff.
+
+Private publication approval does not approve deployment. Future deployment must
+retain non-root execution, read-only filesystems/mounts, dropped capabilities,
+no-new-privileges and resource bounds, enforce `LC_ALL=C` and `LANGUAGE=C`, exclude
+unreviewed loader/locale overrides, and verify actual DNS/search configuration
+including `LOCALDOMAIN`.
