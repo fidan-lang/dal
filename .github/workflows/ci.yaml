@@ -129,6 +129,7 @@ jobs:
       - run: python scripts/test-candidate-inputs.py
       - run: python scripts/test-private-ghcr.py
       - run: python scripts/test-release-image.py
+      - run: python scripts/test-dal-deploy.py
       - run: python scripts/test-vps-aws-policy.py
 
   # CI already exists on main, so this manual entry point works before merging
