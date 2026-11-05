@@ -13,6 +13,8 @@ pub enum DalError {
     // ── Auth ─────────────────────────────────────────────────────────────────
     #[error("invalid or expired token")]
     Unauthorized,
+    #[error("Invalid username, email or password")]
+    InvalidCredentials,
     #[error("you do not have permission to perform this action")]
     Forbidden,
     #[error("invalid API token format")]
@@ -73,7 +75,9 @@ pub enum DalError {
 impl DalError {
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Unauthorized | Self::InvalidApiToken => StatusCode::UNAUTHORIZED,
+            Self::Unauthorized | Self::InvalidCredentials | Self::InvalidApiToken => {
+                StatusCode::UNAUTHORIZED
+            }
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::PackageNotFound(_) | Self::VersionNotFound(_, _) | Self::UserNotFound(_) => {
                 StatusCode::NOT_FOUND
@@ -95,6 +99,7 @@ impl DalError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Unauthorized => "UNAUTHORIZED",
+            Self::InvalidCredentials => "INVALID_CREDENTIALS",
             Self::Forbidden => "FORBIDDEN",
             Self::InvalidApiToken => "INVALID_API_TOKEN",
             Self::PackageNotFound(_) => "PACKAGE_NOT_FOUND",

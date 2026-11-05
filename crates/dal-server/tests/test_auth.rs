@@ -131,6 +131,30 @@ async fn register_login_me_logout_flow() {
     .await;
     assert_eq!(status, 200, "login failed: {body}");
     assert_eq!(body["username"], username);
+
+    // Both identifiers resolve to the same Cognito user.
+    let (email_status, email_body) = common::TestApp::unpack(
+        app.post_json(
+            "/auth/login",
+            serde_json::json!({ "username": email, "password": password }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(email_status, 200, "email login failed: {email_body}");
+    assert_eq!(email_body["username"], username);
+
+    // No account enumeration through the bad-password response.
+    let (wrong_status, wrong_body) = common::TestApp::unpack(
+        app.post_json(
+            "/auth/login",
+            serde_json::json!({ "username": email, "password": "incorrect-password" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(wrong_status, 401);
+    assert_eq!(wrong_body["error"]["code"], "INVALID_CREDENTIALS");
 }
 
 /// Login with wrong credentials → 401.

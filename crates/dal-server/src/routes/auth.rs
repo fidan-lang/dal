@@ -305,12 +305,16 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginBody>,
 ) -> Result<(HeaderMap, Json<Value>), DalError> {
-    let username = body.username.trim().to_lowercase();
+    let identifier = body.username.trim().to_lowercase();
 
-    // Gate on email verification before hitting Cognito
-    let db_user = queries::users::get_by_username(&state.db, &username)
-        .await?
-        .ok_or(DalError::Unauthorized)?;
+    // DAL stores a unique email for each account, while Cognito authenticates
+    // with the canonical username. Neither lookup exposes an account existence.
+    let db_user = if identifier.contains('@') {
+        queries::users::get_by_email(&state.db, &identifier).await?
+    } else {
+        queries::users::get_by_username(&state.db, &identifier).await?
+    }
+    .ok_or(DalError::InvalidCredentials)?;
     if !db_user.email_verified {
         return Err(DalError::Validation(
             "please verify your email address before logging in".into(),
@@ -329,9 +333,12 @@ async fn login(
 
     match state
         .cognito
-        .begin_sign_in(&username, &body.password)
-        .await?
-    {
+        .begin_sign_in(&db_user.username, &body.password)
+        .await
+        .map_err(|error| match error {
+            DalError::Unauthorized => DalError::InvalidCredentials,
+            other => other,
+        })? {
         dal_auth::cognito::Authentication::Complete(tokens) => {
             finish_login(&state, tokens, db_user.id, false).await
         }
