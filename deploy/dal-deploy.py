@@ -5,6 +5,7 @@ Read exactly one JSON object from SSH stdin. The private GHCR token lives only i
 this process memory and a root-only Docker config on /run (tmpfs).
 Never call from an unprotected or pull-request-triggered GitHub workflow.
 """
+import base64
 import fcntl
 import json
 import os
@@ -33,6 +34,25 @@ def run(*args, input_text=None, timeout=240):
         # inadvertently echo authentication input.
         raise RuntimeError(f'Command failed ({args[0]} {args[1] if len(args)>1 else ""}), exit={p.returncode}')
     return p.stdout.strip()
+
+
+def write_docker_auth(directory, username, token):
+    """Write isolated, root-only GHCR auth without invoking Docker's GPG/pass helper.
+
+    The caller must provide a private directory on the root-owned /run/dal tmpfs.
+    This file is intentionally short-lived and is removed by TemporaryDirectory.
+    """
+    auth = base64.b64encode(f'{username}:{token}'.encode('utf-8')).decode('ascii')
+    config = {'auths': {'ghcr.io': {'auth': auth}}}
+    path = directory / 'config.json'
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        json.dump(config, handle, separators=(',', ':'))
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def replace_atomic(dst, data):
@@ -141,11 +161,10 @@ def main():
         if run('stat','-f','-c','%T',str(RUNTIME)) != 'tmpfs':
             raise RuntimeError('Refusing non-tmpfs temporary credentials')
         with tempfile.TemporaryDirectory(dir=RUNTIME, prefix='docker-auth-') as auth:
-            os.chmod(auth,0o700)
-            run('docker','--config',auth,'login','ghcr.io','-u',payload['ghcr_user'],'--password-stdin',
-                input_text=payload['ghcr_token']+'\n',timeout=30)
-            for image in (new_api,new_worker):
-                run('docker','--config',auth,'pull',image,timeout=480)
+            os.chmod(auth, 0o700)
+            write_docker_auth(Path(auth), payload['ghcr_user'], payload['ghcr_token'])
+            for image in (new_api, new_worker):
+                run('docker', '--config', auth, 'pull', image, timeout=480)
         print('Both approved image digests pulled; transient GHCR auth deleted',flush=True)
         # A persistent backup permits explicit recovery even if the host crashes mid-deploy.
         replace_atomic(BACKUP,existing)
