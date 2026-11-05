@@ -19,7 +19,8 @@ jobs:
     # Only trusted main-branch releases from the canonical repository.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.event == 'workflow_dispatch' &&
+          (github.event.workflow_run.event == 'workflow_dispatch' ||
+           github.event.workflow_run.event == 'workflow_run') &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == 'fidan-lang/dal' }}
     runs-on: ubuntu-latest
