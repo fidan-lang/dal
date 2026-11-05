@@ -203,7 +203,12 @@ async fn partial_registration_removes_only_its_new_provider_identity_without_cre
                 .await
                 .unwrap();
         }
-        assert_eq!(response.status(), 500);
+        let expected_status = if failure == "password" {
+            StatusCode::UNPROCESSABLE_ENTITY
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        assert_eq!(response.status(), expected_status);
         assert!(
             queries::users::get_by_username(&db, &name)
                 .await
