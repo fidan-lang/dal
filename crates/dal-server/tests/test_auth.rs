@@ -131,6 +131,34 @@ async fn register_login_me_logout_flow() {
     .await;
     assert_eq!(status, 200, "login failed: {body}");
     assert_eq!(body["username"], username);
+
+    // Both identifiers resolve to the same Cognito user.
+    let (email_status, email_body) = common::TestApp::unpack(
+        app.post_json(
+            "/auth/login",
+            serde_json::json!({ "username": email, "password": password }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(email_status, 200, "email login failed: {email_body}");
+    assert_eq!(email_body["username"], username);
+
+    // An unknown email must return the same generic credential error.
+    // Lookup fails before provider I/O, avoiding emulator-dependent failures.
+    let (unknown_status, unknown_body) = common::TestApp::unpack(
+        app.post_json(
+            "/auth/login",
+            serde_json::json!({
+                "username": format!("missing-{username}@dal.test"),
+                "password": "WrongPass987!"
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(unknown_status, 401);
+    assert_eq!(unknown_body["error"]["code"], "INVALID_CREDENTIALS");
 }
 
 /// Login with wrong credentials → 401.

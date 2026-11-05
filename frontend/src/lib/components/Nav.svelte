@@ -11,7 +11,8 @@
     async function handleLogout() {
         await auth.logout(fetch);
         currentUser.set(null);
-        goto("/");
+        // Prevent stale layout data from restoring the signed-out navbar.
+        await goto("/", { invalidateAll: true });
     }
 
     const navLinks = [

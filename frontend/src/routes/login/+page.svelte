@@ -34,10 +34,10 @@
         resendLoading = true;
         resendMessage = "";
         try {
-            const res = await auth.resendVerificationByUsername(
-                fetch,
-                username,
-            );
+            const identifier = username.trim();
+            const res = identifier.includes("@")
+                ? await auth.resendVerification(fetch, identifier)
+                : await auth.resendVerificationByUsername(fetch, identifier);
             resendMessage =
                 res.message ||
                 "If your account exists, a verification email has been sent.";
@@ -73,7 +73,8 @@
                 return;
             }
             currentUser.set(user);
-            goto("/dashboard");
+            // Re-fetch SSR session data after the login cookies have changed.
+            await goto("/dashboard", { invalidateAll: true });
         } catch (err) {
             error =
                 err instanceof Error
@@ -140,7 +141,7 @@
                     <label
                         for="username"
                         class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                        >Username</label
+                        >Username or email</label
                     >
                     <input
                         id="username"
@@ -149,7 +150,7 @@
                         required
                         autocomplete="username"
                         class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                        placeholder="your-username"
+                        placeholder="username or email"
                     />
                 </div>
 
