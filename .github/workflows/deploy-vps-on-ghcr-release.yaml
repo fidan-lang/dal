@@ -1,0 +1,157 @@
+name: DAL VPS deployment (approved GHCR release)
+
+on:
+  workflow_run:
+    workflows:
+      - Prepare or publish GHCR images (manual)
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dal-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    # Only trusted main-branch releases from the canonical repository.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'workflow_dispatch' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == 'fidan-lang/dal' }}
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.artifacts.outputs.published }}
+    steps:
+      - name: Verify actual private-publication receipts exist
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN: ${{ github.event.workflow_run.id }}
+          UPSTREAM_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN/artifacts?per_page=100" > "$RUNNER_TEMP/dal-artifacts.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          data=json.loads((Path(os.environ['RUNNER_TEMP'])/'dal-artifacts.json').read_text())
+          run=os.environ['UPSTREAM_RUN']
+          attempt=os.environ['UPSTREAM_ATTEMPT']
+          names={a['name'] for a in data['artifacts'] if not a.get('expired',True)}
+          expected={f'private-ghcr-{target}-{run}-{attempt}' for target in ('server','worker')}
+          available=expected.issubset(names)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f'published={str(available).lower()}\n')
+          print('Both approved image publication receipts present' if available else 'No complete private publication receipt; no deployment')
+          PY
+
+  deploy:
+    needs: discover
+    if: needs.discover.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    # Create this dedicated environment and supply its secrets/vars before merging.
+    environment: dal-production
+    timeout-minutes: 25
+    steps:
+      - name: Download immutable publication receipts from approved release run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN: ${{ github.event.workflow_run.id }}
+          UPSTREAM_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          for target in server worker; do
+            mkdir -p "receipts/$target"
+            gh run download "$UPSTREAM_RUN" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "private-ghcr-$target-$UPSTREAM_RUN-$UPSTREAM_ATTEMPT" \
+              --dir "receipts/$target"
+          done
+
+      - name: Validate both release identities and private package gates
+        id: digest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          if os.environ['GITHUB_REPOSITORY'] != 'fidan-lang/dal':
+              raise SystemExit('Wrong GitHub repository')
+          sha=os.environ['UPSTREAM_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}',sha):
+              raise SystemExit('Invalid upstream SHA')
+          digests={}
+          for target in ('server','worker'):
+              receipt=json.loads((Path('receipts')/target/'private-ghcr-after.json').read_text())
+              if receipt.get('repository') != 'fidan-lang/dal' or receipt.get('environment') != 'ghcr-release' or receipt.get('acl_review') != 'owner-attested; not API-inferred':
+                  raise SystemExit('Publication attestation missing')
+              packages=receipt.get('packages')
+              if not isinstance(packages,list) or len(packages)!=2:
+                  raise SystemExit('Invalid package attestation')
+              entries={p.get('name'):p for p in packages}
+              if set(entries) != {'dal/server','dal/worker'}:
+                  raise SystemExit('Unexpected GHCR packages')
+              for entry in entries.values():
+                  if entry.get('visibility') != 'private' or entry.get('anonymous_pull') != 'denied':
+                      raise SystemExit('Private GHCR gate failed')
+              digest=entries['dal/'+target].get('digest')
+              if not isinstance(digest,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',digest):
+                  raise SystemExit('Missing immutable published image digest')
+              digests[target]=digest
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              for target,digest in digests.items():
+                  f.write(f'{target}={digest}\n')
+          print('Private package receipts and immutable image digests verified for '+sha[:12])
+          PY
+        env:
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install pinned SSH credentials (no SSH TOFU)
+        env:
+          VPS_DEPLOY_PRIVATE_KEY: ${{ secrets.VPS_DEPLOY_PRIVATE_KEY }}
+          VPS_DEPLOY_KNOWN_HOSTS: ${{ secrets.VPS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_DEPLOY_PRIVATE_KEY" && test -n "$VPS_DEPLOY_KNOWN_HOSTS"
+          mkdir -m 700 -p "$RUNNER_TEMP/dal-ssh"
+          printf '%s\n' "$VPS_DEPLOY_PRIVATE_KEY" > "$RUNNER_TEMP/dal-ssh/id_ed25519"
+          chmod 600 "$RUNNER_TEMP/dal-ssh/id_ed25519"
+          printf '%s\n' "$VPS_DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/dal-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/dal-ssh/known_hosts"
+          ssh-keygen -y -P '' -f "$RUNNER_TEMP/dal-ssh/id_ed25519" >/dev/null
+
+      - name: Deploy approved images through constrained SSH command
+        env:
+          API_DIGEST: ${{ steps.digest.outputs.server }}
+          WORKER_DIGEST: ${{ steps.digest.outputs.worker }}
+          GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          test -n "$GHCR_PULL_TOKEN" && test -n "$GHCR_PULL_USER"
+          python3 - <<'PY' | ssh \
+            -i "$RUNNER_TEMP/dal-ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/dal-ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=20 \
+            daldeploy@51.210.241.128
+          import json, os, sys
+          data={
+              'server_digest':os.environ['API_DIGEST'],
+              'worker_digest':os.environ['WORKER_DIGEST'],
+              'ghcr_user':os.environ['GHCR_PULL_USER'],
+              'ghcr_token':os.environ['GHCR_PULL_TOKEN'],
+              'release_sha':os.environ['UPSTREAM_SHA'],
+              'release_run':int(os.environ['UPSTREAM_RUN']),
+          }
+          json.dump(data,sys.stdout)
+          PY
