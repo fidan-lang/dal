@@ -9,7 +9,7 @@
     safeWebUrl,
     timeAgo,
   } from "$lib/utils";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   let { data } = $props();
   const homepage = $derived(safeWebUrl(data.pkg.homepage_url));
@@ -18,6 +18,49 @@
   let tab = $state<"readme" | "versions" | "owners">("readme");
   let ownersList = $state<Awaited<ReturnType<typeof owners.list>>>([]);
   let yankError = $state("");
+  let copiedCommand = $state(false);
+  let copyFailed = $state(false);
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
+  const installCommand = $derived(`fidan dal add ${data.pkg.name}`);
+
+  onDestroy(() => {
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+  });
+
+  async function copyInstallCommand() {
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    let success = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(installCommand);
+        success = true;
+      }
+    } catch {
+      // Browser clipboard permission can be unavailable; fall back below.
+    }
+    if (!success) {
+      const field = document.createElement("textarea");
+      field.value = installCommand;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.left = "-9999px";
+      document.body.appendChild(field);
+      try {
+        field.select();
+        success = document.execCommand("copy");
+      } catch {
+        success = false;
+      } finally {
+        field.remove();
+      }
+    }
+    copiedCommand = success;
+    copyFailed = !success;
+    copyResetTimer = setTimeout(() => {
+      copiedCommand = false;
+      copyFailed = false;
+    }, 2000);
+  }
 
   // Latest non-yanked version's README
   let latestVersion = $derived(
@@ -121,9 +164,53 @@
           class="mb-6 p-4 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
         >
           <p class="text-xs text-[var(--color-text-muted)] mb-2">Install</p>
-          <code class="font-mono text-sm text-[var(--color-primary-light)]">
-            fidan dal add {data.pkg.name}
-          </code>
+          <div class="flex items-center justify-between gap-3">
+            <code
+              class="min-w-0 break-all font-mono text-sm text-[var(--color-primary-light)]"
+            >
+              {installCommand}
+            </code>
+            <button
+              type="button"
+              onclick={copyInstallCommand}
+              aria-label={copiedCommand
+                ? "Install command copied"
+                : "Copy install command"}
+              title={copyFailed
+                ? "Copy failed"
+                : copiedCommand
+                  ? "Copied!"
+                  : "Copy install command"}
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-primary)]/10 hover:text-[var(--color-primary-light)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            >
+              <svg
+                aria-hidden="true"
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                {#if copiedCommand}
+                  <path d="M20 6 9 17l-5-5" />
+                {:else}
+                  <rect x="8" y="8" width="13" height="13" rx="2" />
+                  <path
+                    d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"
+                  />
+                {/if}
+              </svg>
+            </button>
+          </div>
+          <span class="sr-only" aria-live="polite">
+            {copyFailed
+              ? "Could not copy the install command. Please select and copy it manually."
+              : copiedCommand
+                ? "Install command copied to clipboard."
+                : ""}
+          </span>
         </div>
       {/if}
 
