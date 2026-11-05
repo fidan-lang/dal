@@ -7,10 +7,82 @@ on:
         description: "Explicit approval to deploy existing Pages project: DEPLOY_EXISTING_PAGES"
         required: true
         type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# workflow_run can access deployment secrets, so it MUST reject PR and fork CI.
+# Only a successful push CI for the canonical repository and current main SHA
+# is trusted as a production deployment source.
+permissions:
+  contents: read
+
+concurrency:
+  group: dal-frontend-production-deploy
+  cancel-in-progress: false
 
 jobs:
+  detect:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' &&
+         github.ref == 'refs/heads/main' &&
+         inputs.confirmation == 'DEPLOY_EXISTING_PAGES') ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == 'fidan-lang/dal')
+      }}
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.changes.outputs.deploy }}
+      sha: ${{ steps.changes.outputs.sha }}
+    steps:
+      - name: Checkout approved commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Require current main and detect frontend changes
+        id: changes
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin main
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$RELEASE_SHA" ]]; then
+            echo 'Superseded main commit; skipping stale frontend deployment.'
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The protected main branch is normally advanced by one squash commit.
+          # Build dependencies/metadata at the repository root are included.
+          if git rev-parse 'HEAD^' >/dev/null 2>&1; then
+            git diff --name-only 'HEAD^' HEAD > "$RUNNER_TEMP/dal-frontend-changes.txt"
+          else
+            git ls-tree -r --name-only HEAD > "$RUNNER_TEMP/dal-frontend-changes.txt"
+          fi
+          if grep -Eq '^(frontend/|LICENSE$|NOTICE$|\.github/workflows/deploy-frontend\.yaml$)' "$RUNNER_TEMP/dal-frontend-changes.txt"; then
+            echo 'Relevant frontend files changed; deploying after successful CI.'
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'No frontend or frontend-build changes; skipping Pages deployment.'
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
-    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'DEPLOY_EXISTING_PAGES'
+    needs: detect
+    if: needs.detect.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     environment: cloudflare-deploy
     permissions:
@@ -18,13 +90,19 @@ jobs:
       deployments: write
 
     steps:
-      - name: Checkout
+      - name: Checkout approved commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.detect.outputs.sha }}
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install deps
         working-directory: frontend
@@ -33,6 +111,15 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+
+      - name: Reject superseded commit before production deployment
+        env:
+          RELEASE_SHA: ${{ needs.detect.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$RELEASE_SHA"
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
