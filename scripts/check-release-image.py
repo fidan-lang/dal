@@ -1,17 +1,17 @@
-"""Compare a release image with the owner's exact-image private-publication acceptance."""
+"""Live release hardening gate. The previous image is not an approval baseline.
+
+Recompiled application binaries and patched OS packages are EXPECTED to differ.
+The gate enforces stable structural guarantees and emits archive checksum proof.
+Run Trivy as a mandatory separate step before publication.
+"""
 import argparse
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
+import re
 import subprocess
 
-ACCEPTANCE_SECRET_ENV = 'GHCR_RUNTIME_ACCEPTANCE'
-RUNTIME_FIELDS = {'platform', 'config', 'packages_sha256', 'native_files_sha256',
-                  'library_links_sha256', 'binary_modes_sha256', 'binaries', 'glibc_packages',
-                  'installed_packages', 'native_files', 'privilege_bearing_files'}
-CONFIG_FIELDS = ('User', 'Env', 'Entrypoint', 'Cmd', 'WorkingDir', 'Healthcheck', 'ExposedPorts')
 PROBE = r'''set -eu
 printf 'PACKAGES\n'
 dpkg-query -W -f='${Package}\t${Architecture}\t${Version}\t${db:Status-Status}\n'
@@ -24,137 +24,115 @@ find /usr/local/bin -type f -printf '%p\t%m\t%U\t%G\n'
 printf 'PRIVILEGES\n'
 find / -xdev -type f -perm /6000 -print
 '''
+EXPECTED = {
+    'server': {'entrypoint': ['/usr/local/bin/dal-server'],
+               'health': ['/usr/local/bin/dal-healthcheck'],
+               'binaries': {'/usr/local/bin/dal-server', '/usr/local/bin/dal-healthcheck'}},
+    'worker': {'entrypoint': ['/usr/local/bin/dal-worker'],
+               'health': ['/usr/local/bin/dal-worker', '--healthcheck'],
+               'binaries': {'/usr/local/bin/dal-worker'}},
+}
 
 
-def run(arguments):
-    result = subprocess.run(arguments, capture_output=True, text=True, timeout=90)
+def command(args):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=90, check=False)
     if result.returncode:
-        raise ValueError('Local release-image inspection failed; publication blocked')
+        raise ValueError('Local image inspection failed (command withheld)')
     return result.stdout
 
 
 def capture(image):
-    metadata = json.loads(run(['docker', 'image', 'inspect', image]))[0]
-    if metadata.get('Os') != 'linux' or metadata.get('Architecture') != 'amd64':
-        raise ValueError('Only the reviewed Linux AMD64 runtime is accepted')
-    if (metadata['Config'].get('Labels') or {}).get('org.opencontainers.image.source'):
-        raise ValueError('Private image must not acquire repository-source linkage')
-    output = run(['docker', 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
-                  '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges:true', '--user', '0:0', '--memory', '256m',
-                  '--entrypoint', '/bin/sh', image, '-ec', PROBE])
-    # The read-only inspector needs DAC_READ_SEARCH for _apt-owned cache directories; production capabilities remain dropped. No DAL executable is started.
+    meta = json.loads(command(['docker', 'image', 'inspect', image]))[0]
+    if meta.get('Os') != 'linux' or meta.get('Architecture') != 'amd64':
+        raise ValueError('Expected Linux AMD64 release image')
+    cfg = meta.get('Config') or {}
+    if (cfg.get('Labels') or {}).get('org.opencontainers.image.source'):
+        raise ValueError('Private image must not be repository-linked')
+    raw = command(['docker', 'run', '--rm', '--network', 'none', '--read-only',
+                   '--cap-drop', 'ALL', '--cap-add', 'DAC_READ_SEARCH',
+                   '--security-opt', 'no-new-privileges:true', '--user', '0:0',
+                   '--memory', '256m', '--entrypoint', '/bin/sh', image, '-ec', PROBE])
     sections = {name: [] for name in ('PACKAGES', 'FILES', 'LINKS', 'MODES', 'PRIVILEGES')}
     current = None
-    for line in output.splitlines():
+    for line in raw.splitlines():
         if line in sections:
             current = line
         elif current is None:
-            raise ValueError('Unexpected image inspection output')
+            raise ValueError('Invalid runtime evidence')
         else:
             sections[current].append(line)
     if sections['PRIVILEGES']:
-        raise ValueError('Release image contains SUID/SGID files')
+        raise ValueError('SUID or SGID files in release image')
     packages = {}
     for line in sections['PACKAGES']:
-        name, architecture, version, status = line.split('\t')
+        name, arch, version, status = line.split('\t')
         if status == 'installed':
-            packages[name + ':' + architecture] = version
+            packages[name+':'+arch] = version
     files = {}
     for line in sections['FILES']:
         digest, name = line.split('  ', 1)
-        if len(digest) != 64:
-            raise ValueError('Invalid runtime file digest')
+        if not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise ValueError('Invalid runtime binary fingerprint')
         files[name] = digest
-    if not packages or not files or not any(name.endswith('/libc.so.6') for name in files):
-        raise ValueError('Runtime package/library evidence incomplete')
-    return {'platform': 'linux/amd64', 'config': {key: metadata['Config'].get(key) for key in CONFIG_FIELDS},
-            'packages_sha256': fingerprint(packages), 'native_files_sha256': fingerprint(files),
-            'library_links_sha256': fingerprint(sorted(sections['LINKS'])),
-            'binary_modes_sha256': fingerprint(sorted(sections['MODES'])),
-            'binaries': {name: value for name, value in files.items() if name.startswith('/usr/local/bin/')},
-            'glibc_packages': {name: value for name, value in packages.items() if name in ('libc6:amd64', 'libc-bin:amd64')},
-            'installed_packages': len(packages), 'native_files': len(files), 'privilege_bearing_files': 0}
+    if not packages or not files or 'libc6:amd64' not in packages:
+        raise ValueError('Incomplete runtime package/library evidence')
+    return meta, packages, files, sections
 
 
-def fingerprint(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-
-
-def verify(actual, accepted):
-    differences = sorted(key for key in accepted if actual.get(key) != accepted[key])
-    if set(actual) != set(accepted) or differences:
-        # Report field names only; never dump environment values or provider errors.
-        raise ValueError('Release exposure differs from accepted images: ' + ', '.join(differences or ['schema']))
-
-
-def load_acceptance():
-    # Consume the step-scoped secret before starting any Docker subprocess.
-    raw = os.environ.pop(ACCEPTANCE_SECRET_ENV, '')
-    try:
-        value = json.loads(raw)
-        if (value.get('scope') != 'private-publication-only' or value.get('owner') != 'AppSolves'
-                or value.get('deployment_approved') is not False
-                or set(value['images']) != {'server', 'worker'}):
-            raise ValueError()
-        cves = value['accepted_glibc_cves']
-        if not isinstance(cves, list) or not cves or len(set(cves)) != len(cves):
-            raise ValueError()
-        if not all(isinstance(cve, str) and re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,}', cve) for cve in cves):
-            raise ValueError()
-        for image in value['images'].values():
-            if not re.fullmatch(r'sha256:[a-f0-9]{64}', image['accepted_oci_digest']):
-                raise ValueError()
-            runtime = image['runtime']
-            if (set(runtime) != RUNTIME_FIELDS or runtime['platform'] != 'linux/amd64'
-                    or runtime['config']['User'] not in ('dal:dal', '10001:10001')
-                    or type(runtime['privilege_bearing_files']) is not int
-                    or runtime['privilege_bearing_files'] != 0):
-                raise ValueError()
-            for name in ('packages_sha256', 'native_files_sha256', 'library_links_sha256', 'binary_modes_sha256'):
-                if not re.fullmatch(r'[a-f0-9]{64}', runtime[name]):
-                    raise ValueError()
-            for name in ('installed_packages', 'native_files'):
-                if type(runtime[name]) is not int or runtime[name] <= 0:
-                    raise ValueError()
-            if not runtime['binaries'] or not runtime['glibc_packages']:
-                raise ValueError()
-    except (ValueError, KeyError, TypeError, AttributeError):
-        raise ValueError('Protected GHCR_RUNTIME_ACCEPTANCE secret is missing or invalid; publication blocked') from None
-    return value
+def validate(target, meta, packages, files, sections):
+    policy = EXPECTED[target]
+    cfg = meta['Config']
+    if cfg.get('User') not in ('dal:dal', '10001:10001'):
+        raise ValueError('Runtime must use unprivileged DAL user')
+    if cfg.get('Entrypoint') != policy['entrypoint']:
+        raise ValueError('Unexpected image entrypoint')
+    if cfg.get('Cmd') not in (None, []):
+        raise ValueError('Unexpected image command override')
+    if cfg.get('WorkingDir') != '/tmp':
+        raise ValueError('Unexpected runtime working directory')
+    for assignment in cfg.get('Env') or []:
+        name = assignment.split('=', 1)[0].upper()
+        if any(marker in name for marker in ('SECRET', 'PASSWORD', 'TOKEN', 'DATABASE_URL', 'AWS_ACCESS_KEY', 'AWS_SESSION', 'PRIVATE_KEY')):
+            raise ValueError('Potential credential baked into image environment')
+    hc = cfg.get('Healthcheck') or {}
+    test = hc.get('Test', [])
+    if test != ['CMD', *policy['health']]:
+        raise ValueError('Unexpected image healthcheck')
+    if set(name for name in files if name.startswith('/usr/local/bin/')) != policy['binaries']:
+        raise ValueError('Runtime executable set changed unexpectedly')
+    if len(packages) < 10 or len(files) < len(policy['binaries']):
+        raise ValueError('Incomplete runtime inventory')
+    if sections['PRIVILEGES']:
+        raise ValueError('Privilege-bearing files detected')
+    if target == 'server' and (cfg.get('ExposedPorts') or {}) != {'8080/tcp': {}}:
+        raise ValueError('Expected only DAL API container port')
+    if target == 'worker' and cfg.get('ExposedPorts'):
+        raise ValueError('Worker must expose no ports')
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--validate-acceptance', action='store_true')
-    parser.add_argument('--target', choices=('server', 'worker'))
-    parser.add_argument('--image')
-    parser.add_argument('--archive', type=Path)
-    parser.add_argument('--receipt', type=Path)
-    options = parser.parse_args()
-    acceptance = load_acceptance()
-    if options.validate_acceptance:
-        if any((options.target, options.image, options.archive, options.receipt)):
-            parser.error('--validate-acceptance cannot be combined with image inspection')
-        print('Protected runtime acceptance is configured and valid')
-        return
-    if not all((options.target, options.image, options.archive, options.receipt)):
-        parser.error('--target, --image, --archive and --receipt are required for image inspection')
-    expected = acceptance['images'][options.target]
-    actual = capture(options.image)
-    verify(actual, expected['runtime'])
-    with options.archive.open('rb') as stream:
-        archive_sha256 = hashlib.file_digest(stream, 'sha256').hexdigest()
-    options.receipt.parent.mkdir(parents=True, exist_ok=True)
-    receipt = {'target': options.target, 'equivalent': True, 'archive_sha256': archive_sha256,
-               'scope': acceptance['scope'], 'deployment_approved': False}
-    # This private transport checksum is never included in public Actions artifacts.
-    with os.fdopen(os.open(options.receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
-        stream.write(json.dumps(receipt, indent=2) + '\n')
-    print('Accepted runtime binaries, all installed package versions, libraries and hardening match; private publication only')
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--target', required=True, choices=tuple(EXPECTED))
+    p.add_argument('--image', required=True)
+    p.add_argument('--archive', required=True, type=Path)
+    p.add_argument('--receipt', required=True, type=Path)
+    args = p.parse_args()
+    meta, packages, files, sections = capture(args.image)
+    validate(args.target, meta, packages, files, sections)
+    with args.archive.open('rb') as stream:
+        archive_sha = hashlib.file_digest(stream, 'sha256').hexdigest()
+    receipt = {'target': args.target, 'validated': True,
+               'archive_sha256': archive_sha,
+               'installed_packages': len(packages), 'native_files': len(files)}
+    args.receipt.parent.mkdir(parents=True, exist_ok=True)
+    with os.fdopen(os.open(args.receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
+        json.dump(receipt, stream)
+        stream.write('\n')
+    print('Current runtime hardening and package inventory verified; no stale hash baseline')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, KeyError, OSError, json.JSONDecodeError) as error:
-        raise SystemExit(str(error)) from None
+    except (ValueError, KeyError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        raise SystemExit(str(e)) from None

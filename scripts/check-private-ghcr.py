@@ -22,21 +22,20 @@ def validate_package(value, name):
 
 
 def validate_environment(value, branches):
+    # Automated releases must never wait for human approval. All access is
+    # scoped to the canonical protected main branch, and package visibility
+    # is independently checked both before and after publication.
     rules = value.get("protection_rules", [])
-    reviews = [r for r in rules if r.get("type") == "required_reviewers"]
-    if value.get("name") != ENVIRONMENT or value.get("can_admins_bypass") is not False or len(reviews) != 1:
-        raise ValueError("ghcr-release requires explicit owner approval and no admin bypass")
-    reviewers = reviews[0].get("reviewers", [])
-    if (reviews[0].get("prevent_self_review") is not False or len(reviewers) != 1
-            or reviewers[0].get("type") != "User"
-            or reviewers[0].get("reviewer", {}).get("login") != OWNER):
-        raise ValueError("AppSolves must be the sole required reviewer; owner self-approval must be enabled")
+    if value.get("name") != ENVIRONMENT or value.get("can_admins_bypass") is not False:
+        raise ValueError("ghcr-release requires an explicit non-bypass environment")
+    if any(r.get("type") == "required_reviewers" for r in rules):
+        raise ValueError("Automatic GHCR releases require no required reviewers")
     if ((value.get("deployment_branch_policy") or {}).get("custom_branch_policies") is not True
             or (value.get("deployment_branch_policy") or {}).get("protected_branches") is not False):
         raise ValueError("Explicit main-only environment branch policy required")
     policies = branches.get("branch_policies", [])
     if len(policies) != 1 or policies[0].get("name") != "main" or policies[0].get("type") != "branch":
-        raise ValueError("Release environment must allow only the main branch, never arbitrary tags/branches")
+        raise ValueError("Release environment must allow only the main branch")
 
 
 def validate_owner(membership, owners):

@@ -17,8 +17,7 @@ spec.loader.exec_module(policy)
 def environment():
     return {"name": "ghcr-release", "can_admins_bypass": False,
             "deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False},
-            "protection_rules": [{"type": "required_reviewers", "prevent_self_review": False,
-                                  "reviewers": [{"type": "User", "reviewer": {"id": 1, "login": "AppSolves"}}]}]}
+            "protection_rules": []}
 
 
 def branches():
@@ -29,7 +28,7 @@ class PrivateImages(unittest.TestCase):
     def test_workflow_keeps_privacy_gates_and_uses_nested_image_names(self):
         import yaml
         workflow = yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/ghcr-manual.yaml").read_text())
-        self.assertEqual(set(workflow.get("on", workflow.get(True))), {"workflow_dispatch"})
+        self.assertEqual(set(workflow.get("on", workflow.get(True))), {"workflow_dispatch", "workflow_run"})
         job = workflow["jobs"]["image"]
         self.assertEqual(job["environment"], "ghcr-release")
         self.assertEqual(job["permissions"]["packages"], "read")
@@ -37,7 +36,7 @@ class PrivateImages(unittest.TestCase):
         guard = next(i for i, step in enumerate(steps) if "check-private-ghcr.py --receipt" in step.get("run", ""))
         login = next(i for i, step in enumerate(steps) if "docker/login-action@" in step.get("uses", ""))
         self.assertLess(guard, login)
-        self.assertEqual(steps[guard]["if"], "inputs.publish")
+        self.assertEqual(steps[guard]["if"], "env.PUBLISH_REQUESTED == 'true'")
         for step in steps:
             if "docker/login-action@" in step.get("uses", ""):
                 self.assertNotIn("GITHUB_TOKEN", step["with"]["password"])
@@ -73,25 +72,18 @@ class PrivateImages(unittest.TestCase):
         with self.assertRaises(ValueError):
             policy.validate_package({"id": 1, "name": "dal-server", "visibility": "private"}, "dal/server")
 
-    def test_owner_self_approval_is_explicit_and_bypass_is_forbidden(self):
+    def test_unattended_environment_rejects_reviewers_and_other_branches(self):
         policy.validate_environment(environment(), branches())
-        for changes in ({"name": "other"}, {"can_admins_bypass": True}, {"protection_rules": []},
-                        {"deployment_branch_policy": None}):
+        for changes in ({"name": "other"}, {"can_admins_bypass": True}, {"protection_rules": [
+                {"type": "required_reviewers", "reviewers": []}]},
+                {"deployment_branch_policy": None}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 policy.validate_environment({**environment(), **changes}, branches())
-        for value in (True, None):
-            candidate = environment(); candidate["protection_rules"][0]["prevent_self_review"] = value
-            with self.subTest(self_review=value), self.assertRaises(ValueError):
-                policy.validate_environment(candidate, branches())
-        candidate = environment(); candidate["deployment_branch_policy"]["protected_branches"] = True
-        with self.assertRaises(ValueError): policy.validate_environment(candidate, branches())
-        for reviewer in ({"type": "Team", "reviewer": {"login": "AppSolves"}},
-                         {"type": "User", "reviewer": {"login": "someone-else"}}):
-            candidate = environment(); candidate["protection_rules"][0]["reviewers"] = [reviewer]
-            with self.assertRaises(ValueError): policy.validate_environment(candidate, branches())
-        candidate = environment(); candidate["protection_rules"][0]["reviewers"] *= 2
-        with self.assertRaises(ValueError): policy.validate_environment(candidate, branches())
-        for rule in ({"name": "*", "type": "branch"}, {"name": "main", "type": "tag"}):
+        candidate = environment()
+        candidate["deployment_branch_policy"]["protected_branches"] = True
+        with self.assertRaises(ValueError):
+            policy.validate_environment(candidate, branches())
+        for rule in ({"name":"*", "type":"branch"}, {"name":"main", "type":"tag"}):
             with self.assertRaises(ValueError):
                 policy.validate_environment(environment(), {"branch_policies": [rule]})
 

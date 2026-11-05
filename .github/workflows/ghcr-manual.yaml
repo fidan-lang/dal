@@ -1,4 +1,8 @@
 name: Prepare or publish GHCR images (manual)
+
+# Historical workflow name is intentionally preserved: the VPS workflow_run
+# listener depends on this exact name. This workflow now also publishes after
+# a successful CI push to the canonical, protected main branch.
 on:
   workflow_dispatch:
     inputs:
@@ -9,14 +13,30 @@ on:
       confirmation:
         type: string
         description: Enter PUBLISH_APPROVED_GHCR to permit external image writes
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
 permissions:
   contents: read
+  actions: read
+
 concurrency:
-  group: ghcr-manual-${{ github.ref }}
+  group: ghcr-publication-main
   cancel-in-progress: false
+
 jobs:
   image:
-    if: ${{ !inputs.publish || (github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_APPROVED_GHCR') }}
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' &&
+         (!inputs.publish || (github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_APPROVED_GHCR'))) ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == 'fidan-lang/dal')
+      }}
     runs-on: ubuntu-latest
     environment: ghcr-release
     permissions:
@@ -27,98 +47,143 @@ jobs:
       RUNTIME_RECEIPT: target/runtime-equivalence.json
       IMAGE_TARGET: ${{ matrix.target }}
       IMAGE_LOCAL: dal-release:${{ matrix.target }}
-      IMAGE_TAG: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      IMAGE_TAG: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.event.workflow_run.head_sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      PUBLISH_REQUESTED: ${{ github.event_name == 'workflow_run' || inputs.publish }}
     strategy:
+      fail-fast: true
       matrix:
         target: [server, worker]
     steps:
+      # Never use an untrusted PR checkout from workflow_run. Source can only be
+      # the canonical repo's successful push CI on main.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
-      - name: Validate protected runtime acceptance before building
+
+      - name: Reject obsolete or noncanonical CI releases
+        if: github.event_name == 'workflow_run'
         env:
-          GHCR_RUNTIME_ACCEPTANCE: ${{ secrets.GHCR_RUNTIME_ACCEPTANCE }}
-        run: python3 scripts/check-release-image.py --validate-acceptance
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'fidan-lang/dal'
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          CURRENT_MAIN="$(gh api 'repos/fidan-lang/dal/git/ref/heads/main' --jq '.object.sha')"
+          test "$RELEASE_SHA" = "$CURRENT_MAIN" || { echo 'Superseded CI run; not publishing'; exit 1; }
+
       - name: Confirm PRIVATE packages and release safeguards before registry login
-        if: inputs.publish
+        if: env.PUBLISH_REQUESTED == 'true'
         env:
           GH_TOKEN: ${{ secrets.GHCR_VISIBILITY_TOKEN }}
           GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           GHCR_PRIVATE_ACCESS_REVIEW: ${{ vars.GHCR_PRIVATE_ACCESS_REVIEW }}
         run: python3 scripts/check-private-ghcr.py --receipt target/private-ghcr-before.json
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: inputs.publish
+        if: env.PUBLISH_REQUESTED == 'true'
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_PUBLISH_USER }}
           password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+
       - name: Install OCI copy tooling
         run: |
+          set -euo pipefail
           mkdir -p target
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y skopeo
+
       - id: image
         env:
-          DOCKER_BUILD_RECORD_UPLOAD: "false"
-          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+          DOCKER_BUILD_SUMMARY: 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           target: ${{ matrix.target }}
-          # Enable another architecture only after its actual image acceptance passes.
           platforms: linux/amd64
           push: false
           outputs: type=oci,dest=${{ env.IMAGE_ARCHIVE }},compression=gzip
-          tags: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          # Do not auto-link private packages to the public source repository.
+          tags: ghcr.io/fidan-lang/dal/${{ matrix.target }}:sha-${{ github.event.workflow_run.head_sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
           sbom: true
-          # Public-repository Actions caches are readable by fork PRs.
-          # Keep private image layers inside the ephemeral builder.
-      - name: Verify release runtime before any registry push
-        env:
-          GHCR_RUNTIME_ACCEPTANCE: ${{ secrets.GHCR_RUNTIME_ACCEPTANCE }}
+
+      - name: Load candidate locally before scanning
         run: |
+          set -euo pipefail
           skopeo --override-os linux --override-arch amd64 copy --quiet "oci-archive:$IMAGE_ARCHIVE" "docker-daemon:$IMAGE_LOCAL"
-          python3 scripts/check-release-image.py --target "$IMAGE_TARGET" --image "$IMAGE_LOCAL" --archive "$IMAGE_ARCHIVE" --receipt "$RUNTIME_RECEIPT"
-      - name: Publish only the verified OCI archive with all attestations
-        if: inputs.publish
+
+      - name: Fail on fixable HIGH or CRITICAL OS/library CVEs
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_LOCAL }}
+          scan-type: image
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Verify current runtime hardening (not previous-image equality)
         run: |
+          set -euo pipefail
+          python3 scripts/check-release-image.py --target "$IMAGE_TARGET" --image "$IMAGE_LOCAL" --archive "$IMAGE_ARCHIVE" --receipt "$RUNTIME_RECEIPT"
+
+      - name: Publish verified OCI archive and compute actual registry digest
+        if: env.PUBLISH_REQUESTED == 'true'
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_run' ]; then
+            CURRENT_MAIN="$(gh api 'repos/fidan-lang/dal/git/ref/heads/main' --jq '.object.sha')"
+            test "$RELEASE_SHA" = "$CURRENT_MAIN" || { echo 'Main advanced; refusing stale publication'; exit 1; }
+          fi
           python3 -c 'import json,os; r=json.load(open(os.environ["RUNTIME_RECEIPT"])); print(r["archive_sha256"] + "  " + os.environ["IMAGE_ARCHIVE"])' | sha256sum --check
           skopeo copy --all --preserve-digests --quiet --authfile "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "oci-archive:$IMAGE_ARCHIVE" "docker://$IMAGE_TAG"
-      - name: Verify actual published visibility and immutable digest
-        if: inputs.publish
+          # The registry's actual manifest digest, not a pre-push build output.
+          MANIFEST_HASH="$(skopeo inspect --raw --authfile "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "docker://$IMAGE_TAG" | sha256sum | cut -d' ' -f1)"
+          test "${#MANIFEST_HASH}" -eq 64
+          printf 'digest=sha256:%s\n' "$MANIFEST_HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Verify actual PRIVATE visibility and immutable registry digest
+        if: env.PUBLISH_REQUESTED == 'true'
         env:
           GH_TOKEN: ${{ secrets.GHCR_VISIBILITY_TOKEN }}
           GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           GHCR_PRIVATE_ACCESS_REVIEW: ${{ vars.GHCR_PRIVATE_ACCESS_REVIEW }}
-          IMAGE_TARGET: ${{ matrix.target }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
         run: python3 scripts/check-private-ghcr.py --target "$IMAGE_TARGET" --digest "$IMAGE_DIGEST" --receipt target/private-ghcr-after.json
+
       - name: Authenticate dedicated read-only deployment principal
-        if: inputs.publish
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        if: env.PUBLISH_REQUESTED == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_PULL_USER }}
           password: ${{ secrets.GHCR_PULL_TOKEN }}
+
       - name: Verify authorized immutable pull
-        if: inputs.publish
+        if: env.PUBLISH_REQUESTED == 'true'
         env:
-          IMAGE_TARGET: ${{ matrix.target }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
         run: docker pull --platform linux/amd64 "ghcr.io/fidan-lang/dal/$IMAGE_TARGET@$IMAGE_DIGEST"
+
       - name: Preserve visibility and rollback identity receipts
-        if: always() && inputs.publish
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always() && env.PUBLISH_REQUESTED == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: private-ghcr-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/private-ghcr-*.json
           if-no-files-found: error
+
       - name: Remove private build files
         if: always()
         run: rm -f -- "$RUNTIME_RECEIPT" "$IMAGE_ARCHIVE"
