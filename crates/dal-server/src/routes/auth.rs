@@ -39,6 +39,51 @@ pub fn router() -> Router<AppState> {
 const ACCESS_COOKIE_NAME: &str = "dal_access_token";
 const REFRESH_COOKIE_NAME: &str = "dal_refresh_token";
 
+// Keep in sync with frontend/src/lib/password.ts and the production Cognito pool.
+// Do not echo user-supplied passwords, provider request payloads or SDK messages.
+fn validate_password(password: &str) -> Result<(), DalError> {
+    let mut missing = Vec::new();
+    if password.chars().count() < 8 {
+        missing.push("at least 8 characters");
+    }
+    if !password.chars().any(|c| c.is_ascii_uppercase()) {
+        missing.push("an uppercase letter");
+    }
+    if !password.chars().any(|c| c.is_ascii_lowercase()) {
+        missing.push("a lowercase letter");
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        missing.push("a number");
+    }
+    if !password.chars().any(|c| c.is_ascii_punctuation()) {
+        missing.push("a special character");
+    }
+    if !missing.is_empty() {
+        return Err(DalError::Validation(format!(
+            "password must contain {}",
+            missing.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod password_policy_tests {
+    use super::*;
+    #[test]
+    fn rejects_missing_complexity_before_creating_cognito_identity() {
+        for invalid in [
+            "abcdefgh", "ABCDEFGH", "abcdefg1", "Abcdefg1", "Abcdef!x", "ABCD123!",
+        ] {
+            let error = validate_password(invalid).unwrap_err();
+            assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(!error.to_string().contains(invalid));
+        }
+        validate_password("Abcdef1!").unwrap();
+        validate_password("CorrectHorse12#").unwrap();
+    }
+}
+
 pub(super) fn cookie_attrs(path: &str, max_age: i64, base_url: &str) -> String {
     let secure = if base_url.trim().starts_with("https://") {
         "; Secure"
@@ -95,11 +140,7 @@ async fn register(
             "username may only contain letters, digits, hyphens and underscores".into(),
         ));
     }
-    if body.password.len() < 8 {
-        return Err(DalError::Validation(
-            "password must be at least 8 chars".into(),
-        ));
-    }
+    validate_password(&body.password)?;
 
     // Uniqueness checks
     if queries::users::username_exists(&state.db, &username).await? {
@@ -568,11 +609,7 @@ async fn reset_password(
     State(state): State<AppState>,
     Json(body): Json<ResetPasswordBody>,
 ) -> Result<Json<Value>, DalError> {
-    if body.new_password.len() < 8 {
-        return Err(DalError::Validation(
-            "password must be at least 8 chars".into(),
-        ));
-    }
+    validate_password(&body.new_password)?;
 
     let mut transaction = state.db.begin().await?;
     let hash = sha256_hex(&body.token);

@@ -426,7 +426,16 @@ impl CognitoClient {
             .send()
             .await
             .map_err(|e| {
-                self.cognito_request_error("admin_set_user_password", Some(username), e)
+                if e.as_service_error()
+                    .is_some_and(|service| service.is_invalid_password_exception())
+                {
+                    // Safe, user-actionable 422. Never echo provider details or submitted secrets.
+                    DalError::Validation(
+                        "password does not meet the account password policy".into(),
+                    )
+                } else {
+                    self.cognito_request_error("admin_set_user_password", Some(username), e)
+                }
             })?;
         Ok(())
     }

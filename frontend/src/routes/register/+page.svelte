@@ -1,248 +1,248 @@
 <script lang="ts">
-    import { auth, DalApiError } from "$lib/api";
+  import { auth, DalApiError } from "$lib/api";
+  import { passwordPolicyError, PASSWORD_POLICY_HINT } from "$lib/password";
 
-    let username = $state("");
-    let email = $state("");
-    let password = $state("");
-    let password2 = $state("");
-    let error = $state("");
-    let success = $state(false);
-    let loading = $state(false);
-    let resendLoading = $state(false);
-    let resendMessage = $state("");
-    let resendCooldown = $state(0);
-    let cooldownTimer: ReturnType<typeof setInterval> | null = null;
+  let username = $state("");
+  let email = $state("");
+  let password = $state("");
+  let password2 = $state("");
+  let error = $state("");
+  let success = $state(false);
+  let loading = $state(false);
+  let resendLoading = $state(false);
+  let resendMessage = $state("");
+  let resendCooldown = $state(0);
+  let cooldownTimer: ReturnType<typeof setInterval> | null = null;
 
-    function startResendCooldown(seconds: number) {
-        resendCooldown = seconds;
-        if (cooldownTimer) clearInterval(cooldownTimer);
-        cooldownTimer = setInterval(() => {
-            resendCooldown = Math.max(0, resendCooldown - 1);
-            if (resendCooldown === 0 && cooldownTimer) {
-                clearInterval(cooldownTimer);
-                cooldownTimer = null;
-            }
-        }, 1000);
+  function startResendCooldown(seconds: number) {
+    resendCooldown = seconds;
+    if (cooldownTimer) clearInterval(cooldownTimer);
+    cooldownTimer = setInterval(() => {
+      resendCooldown = Math.max(0, resendCooldown - 1);
+      if (resendCooldown === 0 && cooldownTimer) {
+        clearInterval(cooldownTimer);
+        cooldownTimer = null;
+      }
+    }, 1000);
+  }
+
+  async function handleResend() {
+    if (!email || resendCooldown > 0 || resendLoading) return;
+
+    resendLoading = true;
+    resendMessage = "";
+    try {
+      const res = await auth.resendVerification(fetch, email);
+      resendMessage =
+        res.message ||
+        "If your account exists, a new verification email has been sent.";
+      startResendCooldown(30);
+    } catch {
+      // Keep generic to avoid account enumeration details.
+      resendMessage =
+        "If your account exists, a new verification email has been sent.";
+      startResendCooldown(30);
+    } finally {
+      resendLoading = false;
     }
+  }
 
-    async function handleResend() {
-        if (!email || resendCooldown > 0 || resendLoading) return;
-
-        resendLoading = true;
-        resendMessage = "";
-        try {
-            const res = await auth.resendVerification(fetch, email);
-            resendMessage =
-                res.message ||
-                "If your account exists, a new verification email has been sent.";
-            startResendCooldown(30);
-        } catch {
-            // Keep generic to avoid account enumeration details.
-            resendMessage =
-                "If your account exists, a new verification email has been sent.";
-            startResendCooldown(30);
-        } finally {
-            resendLoading = false;
-        }
+  async function handleSubmit(e: Event) {
+    e.preventDefault();
+    error = "";
+    if (password !== password2) {
+      error = "Passwords do not match.";
+      return;
     }
-
-    async function handleSubmit(e: Event) {
-        e.preventDefault();
-        error = "";
-        if (password !== password2) {
-            error = "Passwords do not match.";
-            return;
-        }
-        if (password.length < 8) {
-            error = "Password must be at least 8 characters.";
-            return;
-        }
-        loading = true;
-        try {
-            await auth.register(fetch, username, email, password);
-            success = true;
-        } catch (err) {
-            error =
-                err instanceof DalApiError
-                    ? err.message
-                    : "Registration failed. Please try again.";
-        } finally {
-            loading = false;
-        }
+    const passwordError = passwordPolicyError(password);
+    if (passwordError) {
+      error = passwordError;
+      return;
     }
+    loading = true;
+    try {
+      await auth.register(fetch, username, email, password);
+      success = true;
+    } catch (err) {
+      error =
+        err instanceof DalApiError
+          ? err.message
+          : "Registration failed. Please try again.";
+    } finally {
+      loading = false;
+    }
+  }
 </script>
 
 <svelte:head>
-    <title>Create account — Dal</title>
+  <title>Create account — Dal</title>
 </svelte:head>
 
 <div
-    class="min-h-[calc(100vh-7rem)] flex items-center justify-center px-4 py-12"
+  class="min-h-[calc(100vh-7rem)] flex items-center justify-center px-4 py-12"
 >
-    <div class="w-full max-w-sm">
-        {#if success}
-            <div class="text-center">
-                <div
-                    class="w-16 h-16 bg-[var(--color-success)]/10 rounded-full flex items-center justify-center mx-auto mb-4"
-                >
-                    <svg
-                        class="w-8 h-8 text-[var(--color-success)]"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M5 13l4 4L19 7"
-                        />
-                    </svg>
-                </div>
-                <h1 class="text-2xl font-bold text-white mb-2">
-                    Check your email
-                </h1>
-                <p class="text-[var(--color-text-muted)] text-sm">
-                    We sent a verification link to <strong
-                        class="text-[var(--color-text)]">{email}</strong
-                    >. Click the link in the email to activate your account.
-                </p>
-                <div class="mt-4">
-                    <button
-                        type="button"
-                        onclick={handleResend}
-                        disabled={resendLoading || resendCooldown > 0}
-                        class="w-full py-2.5 bg-[var(--color-primary)]/20 hover:bg-[var(--color-primary)]/30 border border-[var(--color-primary)]/40 disabled:opacity-60 text-[var(--color-primary-light)] font-medium rounded-[var(--radius-md)] transition-colors text-sm"
-                    >
-                        {#if resendLoading}
-                            Resending...
-                        {:else if resendCooldown > 0}
-                            Resend in {resendCooldown}s
-                        {:else}
-                            Resend verification email
-                        {/if}
-                    </button>
-                </div>
-                {#if resendMessage}
-                    <p class="mt-3 text-xs text-[var(--color-text-muted)]">
-                        {resendMessage}
-                    </p>
-                {/if}
-                <a
-                    href="/login"
-                    class="mt-6 inline-block text-sm text-[var(--color-primary)] hover:underline"
-                >
-                    Back to sign in
-                </a>
-            </div>
-        {:else}
-            <div class="text-center mb-8">
-                <h1 class="text-2xl font-bold text-white">
-                    Create your account
-                </h1>
-                <p class="text-[var(--color-text-muted)] text-sm mt-2">
-                    Join the Fidan package registry
-                </p>
-            </div>
-
-            <form onsubmit={handleSubmit} class="space-y-4">
-                {#if error}
-                    <div
-                        class="px-4 py-3 bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 rounded-[var(--radius-md)] text-sm text-[var(--color-danger)]"
-                    >
-                        {error}
-                    </div>
-                {/if}
-
-                <div>
-                    <label
-                        for="username"
-                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                        >Username</label
-                    >
-                    <input
-                        id="username"
-                        type="text"
-                        bind:value={username}
-                        required
-                        autocomplete="username"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                        placeholder="your-username"
-                    />
-                    <p class="text-xs text-[var(--color-text-muted)] mt-1">
-                        Lowercase letters, numbers, hyphens, and underscores only.
-                    </p>
-                </div>
-
-                <div>
-                    <label
-                        for="email"
-                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                        >Email</label
-                    >
-                    <input
-                        id="email"
-                        type="email"
-                        bind:value={email}
-                        required
-                        autocomplete="email"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                        placeholder="you@example.com"
-                    />
-                </div>
-
-                <div>
-                    <label
-                        for="password"
-                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                        >Password</label
-                    >
-                    <input
-                        id="password"
-                        type="password"
-                        bind:value={password}
-                        required
-                        minlength="8"
-                        autocomplete="new-password"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                        placeholder="Min. 8 characters"
-                    />
-                </div>
-
-                <div>
-                    <label
-                        for="password2"
-                        class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
-                        >Confirm password</label
-                    >
-                    <input
-                        id="password2"
-                        type="password"
-                        bind:value={password2}
-                        required
-                        autocomplete="new-password"
-                        class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
-                        placeholder="••••••••"
-                    />
-                </div>
-
-                <button
-                    type="submit"
-                    disabled={loading}
-                    class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white font-medium rounded-[var(--radius-md)] transition-colors text-sm"
-                >
-                    {loading ? "Creating account…" : "Create account"}
-                </button>
-            </form>
-
-            <p class="text-center text-sm text-[var(--color-text-muted)] mt-6">
-                Already have an account?
-                <a
-                    href="/login"
-                    class="text-[var(--color-primary)] hover:underline"
-                    >Sign in</a
-                >
-            </p>
+  <div class="w-full max-w-sm">
+    {#if success}
+      <div class="text-center">
+        <div
+          class="w-16 h-16 bg-[var(--color-success)]/10 rounded-full flex items-center justify-center mx-auto mb-4"
+        >
+          <svg
+            class="w-8 h-8 text-[var(--color-success)]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold text-white mb-2">Check your email</h1>
+        <p class="text-[var(--color-text-muted)] text-sm">
+          We sent a verification link to <strong
+            class="text-[var(--color-text)]">{email}</strong
+          >. Click the link in the email to activate your account.
+        </p>
+        <div class="mt-4">
+          <button
+            type="button"
+            onclick={handleResend}
+            disabled={resendLoading || resendCooldown > 0}
+            class="w-full py-2.5 bg-[var(--color-primary)]/20 hover:bg-[var(--color-primary)]/30 border border-[var(--color-primary)]/40 disabled:opacity-60 text-[var(--color-primary-light)] font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+          >
+            {#if resendLoading}
+              Resending...
+            {:else if resendCooldown > 0}
+              Resend in {resendCooldown}s
+            {:else}
+              Resend verification email
+            {/if}
+          </button>
+        </div>
+        {#if resendMessage}
+          <p class="mt-3 text-xs text-[var(--color-text-muted)]">
+            {resendMessage}
+          </p>
         {/if}
-    </div>
+        <a
+          href="/login"
+          class="mt-6 inline-block text-sm text-[var(--color-primary)] hover:underline"
+        >
+          Back to sign in
+        </a>
+      </div>
+    {:else}
+      <div class="text-center mb-8">
+        <h1 class="text-2xl font-bold text-white">Create your account</h1>
+        <p class="text-[var(--color-text-muted)] text-sm mt-2">
+          Join the Fidan package registry
+        </p>
+      </div>
+
+      <form onsubmit={handleSubmit} class="space-y-4">
+        {#if error}
+          <div
+            class="px-4 py-3 bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 rounded-[var(--radius-md)] text-sm text-[var(--color-danger)]"
+          >
+            {error}
+          </div>
+        {/if}
+
+        <div>
+          <label
+            for="username"
+            class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+            >Username</label
+          >
+          <input
+            id="username"
+            type="text"
+            bind:value={username}
+            required
+            autocomplete="username"
+            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+            placeholder="your-username"
+          />
+          <p class="text-xs text-[var(--color-text-muted)] mt-1">
+            Letters are normalized to lowercase. Numbers, hyphens, and
+            underscores are allowed.
+          </p>
+        </div>
+
+        <div>
+          <label
+            for="email"
+            class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+            >Email</label
+          >
+          <input
+            id="email"
+            type="email"
+            bind:value={email}
+            required
+            autocomplete="email"
+            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+            placeholder="you@example.com"
+          />
+        </div>
+
+        <div>
+          <label
+            for="password"
+            class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+            >Password</label
+          >
+          <input
+            id="password"
+            type="password"
+            bind:value={password}
+            required
+            minlength="8"
+            autocomplete="new-password"
+            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+            placeholder="8+ chars, upper/lower, number, symbol"
+          />
+          <p class="text-xs text-[var(--color-text-muted)] mt-1">
+            {PASSWORD_POLICY_HINT}
+          </p>
+        </div>
+
+        <div>
+          <label
+            for="password2"
+            class="block text-sm font-medium text-[var(--color-text)] mb-1.5"
+            >Confirm password</label
+          >
+          <input
+            id="password2"
+            type="password"
+            bind:value={password2}
+            required
+            autocomplete="new-password"
+            class="w-full px-3 py-2.5 bg-[var(--color-surface-3)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none transition-colors text-sm"
+            placeholder="••••••••"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          class="w-full py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-60 text-white font-medium rounded-[var(--radius-md)] transition-colors text-sm"
+        >
+          {loading ? "Creating account…" : "Create account"}
+        </button>
+      </form>
+
+      <p class="text-center text-sm text-[var(--color-text-muted)] mt-6">
+        Already have an account?
+        <a href="/login" class="text-[var(--color-primary)] hover:underline"
+          >Sign in</a
+        >
+      </p>
+    {/if}
+  </div>
 </div>

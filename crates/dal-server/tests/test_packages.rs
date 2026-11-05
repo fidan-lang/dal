@@ -413,7 +413,19 @@ async fn failed_publication_rolls_back_database_and_cleans_only_its_uploaded_obj
         }
         let (status, body) = common::TestApp::unpack(response).await;
         assert_eq!(status, 500);
-        assert_eq!(body["error"]["message"], "internal server error");
+        let (expected_code, expected_message) = if storage_fails {
+            (
+                "STORAGE_ERROR",
+                "Package storage is temporarily unavailable. Please try again later.",
+            )
+        } else {
+            (
+                "DATABASE_ERROR",
+                "Database service is temporarily unavailable. Please try again later.",
+            )
+        };
+        assert_eq!(body["error"]["code"], expected_code);
+        assert_eq!(body["error"]["message"], expected_message);
         assert!(
             queries::packages::get_by_name(&db, &name)
                 .await

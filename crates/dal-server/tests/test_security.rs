@@ -148,7 +148,11 @@ async fn failed_reset_does_not_consume_token() {
         .await;
     let (status, body) = common::TestApp::unpack(response).await;
     assert_eq!(status, 500);
-    assert_eq!(body["error"]["message"], "internal server error");
+    assert_eq!(body["error"]["code"], "COGNITO_ERROR");
+    assert_eq!(
+        body["error"]["message"],
+        "Account service is temporarily unavailable. Please try again later."
+    );
     assert_eq!(
         queries::users::consume_verification_token(&db, &hash, "password_reset")
             .await
