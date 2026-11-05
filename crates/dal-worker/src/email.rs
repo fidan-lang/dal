@@ -4,6 +4,10 @@ use reqwest::Client;
 use serde_json::json;
 use tracing::info;
 
+// Produced from Dal's leaf logo. Embedded as a PNG instead of an SVG URL for
+// broad email-client support, including Gmail; Mailjet inlines it via Content-ID.
+const DAL_LOGO_PNG: &[u8] = include_bytes!("assets/dal-logo.png");
+
 /// Mailjet REST API email sender.
 pub struct MailjetClient {
     http: Client,
@@ -59,6 +63,12 @@ impl MailjetClient {
                 "Subject": subject,
                 "TextPart": text_body,
                 "HTMLPart": html_body,
+                "InlinedAttachments": [{
+                    "ContentType": "image/png",
+                    "Filename": "dal-logo.png",
+                    "ContentID": "dal-logo",
+                    "Base64Content": base64::engine::general_purpose::STANDARD.encode(DAL_LOGO_PNG),
+                }],
             }]
         });
 

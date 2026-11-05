@@ -124,8 +124,24 @@ impl IntoResponse for DalError {
     fn into_response(self) -> Response {
         let status = self.status();
         let code = self.code();
+        // Do not expose SDK, SQL or provider internals in public error messages.
         let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
-            "internal server error".to_string()
+            match &self {
+                Self::Cognito(_) => {
+                    "Account service is temporarily unavailable. Please try again later."
+                }
+                Self::Database(_) => {
+                    "Database service is temporarily unavailable. Please try again later."
+                }
+                Self::Storage(_) => {
+                    "Package storage is temporarily unavailable. Please try again later."
+                }
+                Self::Email(_) | Self::Sqs(_) => {
+                    "Email delivery is temporarily unavailable. Please try again later."
+                }
+                _ => "An unexpected server error occurred. Please try again later.",
+            }
+            .to_string()
         } else {
             self.to_string()
         };

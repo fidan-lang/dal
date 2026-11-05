@@ -8,6 +8,7 @@ mod email;
 mod health;
 mod jobs;
 mod maintenance;
+mod templates;
 mod worker;
 
 #[tokio::main]
