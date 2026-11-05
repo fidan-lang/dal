@@ -22,16 +22,29 @@ fn escape_html(value: &str) -> String {
     escaped
 }
 
-fn render(
-    username: &str,
-    preheader: &str,
-    eyebrow: &str,
-    title: &str,
-    paragraph_html: &str,
-    button_label: &str,
-    link: &str,
-    note: &str,
-) -> String {
+// Keep email layout arguments together so the shared renderer stays maintainable.
+struct EmailLayout<'a> {
+    username: &'a str,
+    preheader: &'a str,
+    eyebrow: &'a str,
+    title: &'a str,
+    paragraph_html: &'a str,
+    button_label: &'a str,
+    link: &'a str,
+    note: &'a str,
+}
+
+fn render(layout: EmailLayout<'_>) -> String {
+    let EmailLayout {
+        username,
+        preheader,
+        eyebrow,
+        title,
+        paragraph_html,
+        button_label,
+        link,
+        note,
+    } = layout;
     let username = escape_html(username);
     let preheader = escape_html(preheader);
     let eyebrow = escape_html(eyebrow);
@@ -72,16 +85,16 @@ pub fn verify(username: &str, link: &str) -> EmailMessage {
         text: format!(
             "Hi {username},\n\nVerify your email address to activate your Dal account:\n{link}\n\nThis link expires in 24 hours. If you did not create an account, ignore this email.\n\nThe Dal team"
         ),
-        html: render(
+        html: render(EmailLayout {
             username,
-            "Activate your Dal account with one click.",
-            "WELCOME TO DAL",
-            "Verify your email address",
-            "Confirm your email address to activate your account and start publishing packages for Fidan.",
-            "Verify email address",
+            preheader: "Activate your Dal account with one click.",
+            eyebrow: "WELCOME TO DAL",
+            title: "Verify your email address",
+            paragraph_html: "Confirm your email address to activate your account and start publishing packages for Fidan.",
+            button_label: "Verify email address",
             link,
-            "This link expires in 24 hours. Didn't create an account? You can safely ignore this message.",
-        ),
+            note: "This link expires in 24 hours. Didn't create an account? You can safely ignore this message.",
+        }),
     }
 }
 
@@ -91,16 +104,16 @@ pub fn reset(username: &str, link: &str) -> EmailMessage {
         text: format!(
             "Hi {username},\n\nReset your Dal password:\n{link}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.\n\nThe Dal team"
         ),
-        html: render(
+        html: render(EmailLayout {
             username,
-            "Securely reset your Dal account password.",
-            "ACCOUNT SECURITY",
-            "Reset your password",
-            "We received a request to reset your Dal password. Use the button below to choose a new one.",
-            "Reset password",
+            preheader: "Securely reset your Dal account password.",
+            eyebrow: "ACCOUNT SECURITY",
+            title: "Reset your password",
+            paragraph_html: "We received a request to reset your Dal password. Use the button below to choose a new one.",
+            button_label: "Reset password",
             link,
-            "This link expires in 1 hour. If you didn't request a reset, you can safely ignore this message.",
-        ),
+            note: "This link expires in 1 hour. If you didn't request a reset, you can safely ignore this message.",
+        }),
     }
 }
 
@@ -122,16 +135,16 @@ pub fn invite(
         text: format!(
             "Hi {username},\n\n{inviter} invited you to join {package} as a {role}.\n\nReview the invitation: {link}\n\nThe Dal team"
         ),
-        html: render(
+        html: render(EmailLayout {
             username,
-            "You've been invited to collaborate on Dal.",
-            "PACKAGE COLLABORATION",
-            "You've been invited",
-            &paragraph,
-            "Review invitation",
+            preheader: "You've been invited to collaborate on Dal.",
+            eyebrow: "PACKAGE COLLABORATION",
+            title: "You've been invited",
+            paragraph_html: &paragraph,
+            button_label: "Review invitation",
             link,
-            "Only accept invitations from people you recognize.",
-        ),
+            note: "Only accept invitations from people you recognize.",
+        }),
     }
 }
 
@@ -153,16 +166,16 @@ pub fn published(
         text: format!(
             "Hi {username},\n\n{publisher} published {package} v{version}.\n\nView the package: {link}\n\nThe Dal team"
         ),
-        html: render(
+        html: render(EmailLayout {
             username,
-            "A new package version is available.",
-            "PACKAGE ACTIVITY",
-            "New version published",
-            &paragraph,
-            "View package",
+            preheader: "A new package version is available.",
+            eyebrow: "PACKAGE ACTIVITY",
+            title: "New version published",
+            paragraph_html: &paragraph,
+            button_label: "View package",
             link,
-            "This notification was triggered by activity on a package you own.",
-        ),
+            note: "This notification was triggered by activity on a package you own.",
+        }),
     }
 }
 
