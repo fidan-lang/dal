@@ -7,6 +7,7 @@
     type TokenScope,
   } from "$lib/api";
   import { timeAgo } from "$lib/utils";
+  import CopyButton from "$lib/components/CopyButton.svelte";
 
   const expiryOptions = [
     { label: "Never expires", value: "never", seconds: null },
@@ -27,7 +28,6 @@
   let selectedExpiry = $state<(typeof expiryOptions)[number]["value"]>("never");
   let error = $state("");
   let creating = $state(false);
-  let copied = $state(false);
 
   $effect(() => {
     tokenList = [...data.tokens];
@@ -85,13 +85,6 @@
         err instanceof DalApiError ? err.message : "Failed to delete token.";
     }
   }
-
-  async function copyToken() {
-    if (!newToken) return;
-    await navigator.clipboard.writeText(newToken);
-    copied = true;
-    setTimeout(() => (copied = false), 2000);
-  }
 </script>
 
 <svelte:head>
@@ -126,12 +119,7 @@
         >
           {newToken}
         </code>
-        <button
-          onclick={copyToken}
-          class="shrink-0 px-3 py-2 bg-[var(--color-surface-3)] border border-[var(--color-border)] hover:border-[var(--color-primary)] rounded-[var(--radius-sm)] text-xs text-[var(--color-text)] transition-colors"
-        >
-          {copied ? "Copied!" : "Copy"}
-        </button>
+        <CopyButton text={newToken ?? ""} label="API token" />
       </div>
     </div>
   {/if}
