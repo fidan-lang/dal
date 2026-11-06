@@ -1,59 +1,46 @@
 # DAL trademark and branding policy
 
-**Draft branding guidance for legal review.** This is separate from the final
-Apache 2.0 software license and asserts no verified trademark registration.
+Last updated: 6 November 2026
 
-## Software rights and project identity
+## Project identity
 
-Fidan identifies the official programming language and compiler/toolchain project.
-DAL (also styled Dal) identifies its official package registry project and hosted
-service. The existing project notices identify Kaan Gönüldinc (AppSolves).
-The project names and logos are used as source identifiers where protected by
-applicable law. This policy does not assert registered trademark status or claim
-rights beyond those available under applicable law.
+**Fidan** identifies the official programming language, compiler, and toolchain.
+**DAL** (also styled Dal) identifies the official Fidan package registry and its
+hosted service. The project notices identify Kaan Gönüldinc (AppSolves).
 
-The software is licensed under the standard [Apache License 2.0](LICENSE).
-Commercial use, modification, redistribution, sale, and hosting are permitted
-under that license. This includes forks, modified distributions, software built
-with Fidan, and independent or competing registries, including commercial ones.
-This policy is separate from the software license and adds no restriction to
-those Apache-licensed rights.
+Names and logos identify the projects and their origin. This document does not
+claim trademark registration or rights that do not exist under applicable law.
+It is separate from the [Apache License 2.0](LICENSE) covering the software.
 
-## Accurate references and attribution
+## Open-source rights
 
-You may make truthful descriptive references, for example "built with Fidan,"
-"based on DAL," or "an independent registry compatible with Fidan." You may
-identify the origin of copied software, retain required copyright/attribution
-notices, and link to the official projects. Comparison, commentary, nominative
-use, and other uses permitted by applicable law are not prohibited.
+You may use, modify, redistribute, sell, and host the Apache-licensed software,
+including forks, competing registries, and commercial projects. These branding
+rules do not change those permissions or the licenses of published packages.
+Keep the attribution required by [NOTICE](NOTICE) when redistributing DAL.
+Apache 2.0 section 6 does not grant a general trademark license.
 
-Keep relevant [NOTICE](NOTICE) attribution when redistributing, as required by
-Apache 2.0. Do not remove attribution merely to distinguish a fork. Apache 2.0
-section 6 addresses trademark use; the license does not independently grant
-general rights to use project names or logos as your own brand.
+## Accurate references
+
+Truthful references such as "built with Fidan", "based on DAL", or
+"independent registry compatible with Fidan" are welcome. Attribution,
+comparisons, commentary, and nominative uses permitted by law are not prohibited.
+An independent operator may describe compatibility without implying endorsement.
 
 ## Avoid misleading affiliation
 
-Do not use names, logos, domains, badges, or presentation to falsely imply that
-an unofficial fork, distribution, registry, or commercial service is the official
-Fidan or DAL project, or is sponsored, endorsed, or operated by its maintainers.
-This applies only to the extent supported by applicable trademark, unfair
-competition, or other law; it is not an additional copyright-license condition.
+Do not present an independent fork, package, commercial service, or distribution
+as the official Fidan or DAL project when it is not. Do not use names, logos,
+domains, or badges to falsely suggest sponsorship, partnership, or endorsement.
+When appropriate, clearly identify independent operators and modified versions.
 
-Clearly identify independent operators and modified distributions where needed
-to avoid confusion. Distinct branding is recommended for forks and services.
-There is no blanket ban on mentioning Fidan or DAL, and no unconditional rule
-requiring every fork to remove the names from truthful references or attribution.
-An accurate statement such as "Unofficial Fidan distribution by Example" can
-help distinguish origin without suppressing attribution.
+These principles apply only to the extent supported by applicable trademark,
+unfair-competition, and other law. They do not impose new restrictions on the
+copyright license or require removal of truthful notices of origin.
 
-## Permission and legal review
+## Branding permission and contact
 
-Ask the maintainers through the [official repository](https://github.com/fidan-lang/dal) before
-claiming special branding permission, partnership, or endorsement. Do not assume
-that permission for one use authorizes other uses. No trademark license for
-unrelated branding is granted by this document.
-
-Before formal enforcement, legal review must confirm the relevant ownership,
-protectability, jurisdiction, and proposed use. No registration or ownership
-search has been represented as completed by this policy.
+For uses that imply official partnership, sponsorship, or special branding
+permission, contact the maintainers through the
+[official repository](https://github.com/fidan-lang/dal). Permission for one
+use does not imply permission for unrelated uses.

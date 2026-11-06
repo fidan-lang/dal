@@ -149,7 +149,7 @@
                 <a
                     href="https://github.com/fidan-lang/dal/blob/main/REGISTRY_TERMS.md"
                     class="hover:text-[var(--color-text)]"
-                    >Registry terms (draft)</a
+                    >Registry terms</a
                 >
             </nav>
         </div>

@@ -1,8 +1,9 @@
 # Database roles and row security
 
-This is the activation procedure for migration `0012_runtime_row_security.sql`.
-It has not been applied to Neon. A live database with migrations 0001–0009 still
-needs 0010, 0011 and 0012 under separate operator approval.
+This document describes DAL's runtime database roles, row-level security, and
+controlled migration procedure. Neon Production has migrations 0010 through 0013
+installed, including `0012_runtime_row_security.sql` and MFA recovery tables.
+New installations apply migrations sequentially using the owner connection.
 
 ## Runtime contract
 
@@ -32,11 +33,12 @@ needs 0010, 0011 and 0012 under separate operator approval.
 | verification_tokens | No direct runtime reads/writes. Issue/consume functions preserve expiry, single-use consumption and transactional email verification. |
 | owner_invites | Invitee sessions and authorized package owners have scoped visibility. Owners issue/change invitations; invitees cannot rewrite role, target, inviter, hash or expiry. Acceptance rechecks inviter authority under the existing package lock. |
 | user_mfa, mfa_sessions, mfa_id_tokens | Only the owning verified session has row access. Pre-authentication checks return a boolean, never all proof records. Existing revocation and MFA binding locks remain. |
+| mfa_recovery_codes, mfa_recovery_grants | No direct runtime table privileges; the API may use narrow, owner-controlled security-definer functions for code generation, single-use consumption, and factor recovery. |
 | packages, package_versions, package_owners | Public reads remain intentional. Authenticated mutations require ownership/membership and relevant credential scopes. First-owner bootstrap is restricted to the creator's new transaction. Archive identities cannot be updated by the runtime. |
 | download_logs | No direct runtime reads; only narrow accounting and aggregate-chart functions. Public download accounting checks that version and package match. |
 | audit_log | Append-only for the authenticated actor; verified session admins can read. Runtime cannot update/delete events. |
 
-All twelve tables enable and force RLS. Sensitive tables have no universal
+All protected tables enable and force RLS. Sensitive tables have no universal
 `USING (true)` policy. The only universal row reads are intentionally public
 package/version/ownership metadata. Public user profiles are a projection excluding
 email, Cognito subject, admin flags and revocation state. Fixed security-definer
@@ -63,7 +65,7 @@ loopback-only fixture roles/passwords; no real configuration is used. Fixture se
 and fault injection use an explicit owner pool; actual routers run as `dal_api`,
 and the actual browser-test worker runs as `dal_worker`.
 
-## Production activation: separately approved, not executed here
+## Production migration and verification procedure
 
 1. Review the migration, role/function ownership, table policies and exact image
    digests independently. Take a protected database backup and rehearse restoration
@@ -122,10 +124,6 @@ and the actual browser-test worker runs as `dal_worker`.
    backup/image/configuration together under a separate rollback approval. Do not
    drop MFA guards, remove policies, or run old owner-dependent binaries against
    the new schema as an improvised rollback.
-
-Source merge is not activation approval. Live Neon TLS/IAM, owner privileges,
-credential provisioning, pooler behavior and the production rollout remain
-**NOT VERIFIED / PENDING OPERATOR APPROVAL**.
 
 PostgreSQL references: [row security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html),
 [security-definer safety](https://www.postgresql.org/docs/current/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY).
