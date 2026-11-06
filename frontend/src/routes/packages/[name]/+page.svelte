@@ -21,7 +21,14 @@
   let copiedCommand = $state(false);
   let copyFailed = $state(false);
   let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
-  const installCommand = $derived(`fidan dal add ${data.pkg.name}`);
+  const installCommandParts = $derived([
+    { text: "fidan dal", color: "text-[var(--color-primary-light)]" },
+    { text: "add", color: "text-[var(--color-text)]" },
+    { text: data.pkg.name, color: "text-[var(--color-warning)]" },
+  ]);
+  const installCommand = $derived(
+    installCommandParts.map((part) => part.text).join(" "),
+  );
 
   onDestroy(() => {
     if (copyResetTimer) clearTimeout(copyResetTimer);
@@ -166,10 +173,9 @@
           <p class="text-xs text-[var(--color-text-muted)] mb-2">Install</p>
           <div class="flex items-center justify-between gap-3">
             <code class="min-w-0 break-all font-mono text-sm">
-              <span class="text-[var(--color-primary-light)]">fidan dal</span
-              >{" "}
-              <span class="text-[var(--color-text)]">add</span>{" "}
-              <span class="text-[var(--color-warning)]">{data.pkg.name}</span>
+              {#each installCommandParts as part, i}
+                <span class={part.color}>{i > 0 ? " " : ""}{part.text}</span>
+              {/each}
             </code>
             <button
               type="button"
