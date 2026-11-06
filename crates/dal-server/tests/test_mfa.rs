@@ -535,3 +535,99 @@ async fn stale_failed_verification_cannot_undo_successful_mfa_enrollment() {
     );
     provider.abort();
 }
+
+#[tokio::test]
+async fn recovery_codes_are_single_use_and_finish_requires_issued_grant() {
+    let _app = common::TestApp::spawn().await;
+    let owner = common::owner_database().await;
+    let id = uuid::Uuid::new_v4();
+    let name = format!("recovery{}", &id.simple().to_string()[..12]);
+    dal_db::queries::users::create(
+        &owner,
+        id,
+        &name,
+        &format!("{name}@dal.test"),
+        &id.to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+    dal_db::queries::users::set_email_verified(&owner, id)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_mfa(user_id,required) VALUES($1,true)")
+        .bind(id)
+        .execute(&owner)
+        .await
+        .unwrap();
+    let api = dal_db::connect("postgres://dal_api:test-api@127.0.0.1:5433/dal_test")
+        .await
+        .unwrap();
+    let tokens: Vec<_> = (0..10).map(|_| dal_auth::generate_api_token()).collect();
+    let hashes: Vec<_> = tokens.iter().map(|t| t.hash.clone()).collect();
+    assert!(
+        sqlx::query("SELECT dal_security.replace_recovery_codes($1,$2)")
+            .bind(id)
+            .bind(&hashes)
+            .execute(&api)
+            .await
+            .is_err()
+    );
+    let mut tx = dal_db::actor_transaction(&api, id, None).await.unwrap();
+    sqlx::query("SELECT dal_security.replace_recovery_codes($1,$2)")
+        .bind(id)
+        .bind(&hashes)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT dal_security.recovery_code_count($1)")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(count, 10);
+    tx.commit().await.unwrap();
+    let ticket = dal_auth::generate_api_token();
+    let first: bool = sqlx::query_scalar("SELECT dal_security.consume_recovery_code($1,$2,$3)")
+        .bind(id)
+        .bind(&tokens[0].hash)
+        .bind(&ticket.hash)
+        .fetch_one(&api)
+        .await
+        .unwrap();
+    assert!(first);
+    let second: bool = sqlx::query_scalar("SELECT dal_security.consume_recovery_code($1,$2,$3)")
+        .bind(id)
+        .bind(&tokens[0].hash)
+        .bind(&ticket.hash)
+        .fetch_one(&api)
+        .await
+        .unwrap();
+    assert!(!second, "one-time recovery code was reused");
+    assert!(
+        sqlx::query("SELECT dal_security.finish_recovery($1,$2)")
+            .bind(id)
+            .bind("0".repeat(64))
+            .execute(&api)
+            .await
+            .is_err()
+    );
+    sqlx::query("SELECT dal_security.finish_recovery($1,$2)")
+        .bind(id)
+        .bind(&ticket.hash)
+        .execute(&api)
+        .await
+        .unwrap();
+    assert!(
+        !dal_db::queries::users::mfa_required(&api, id)
+            .await
+            .unwrap()
+    );
+    let still_present: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mfa_recovery_codes WHERE user_id=$1")
+            .bind(id)
+            .fetch_one(&owner)
+            .await
+            .unwrap();
+    assert_eq!(still_present, 0);
+}

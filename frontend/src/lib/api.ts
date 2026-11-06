@@ -712,4 +712,16 @@ export const mfa = {
       password,
       current_code,
     }),
+  generateRecoveryCodes: (f: FetchFn, password: string, current_code: string) =>
+    request<{ codes: string[]; message: string }>(
+      f,
+      "POST",
+      "/auth/mfa/recovery-codes",
+      {
+        password,
+        current_code,
+      },
+    ),
+  recover: (f: FetchFn, code: string) =>
+    request<{ message: string }>(f, "POST", "/auth/mfa/recover", { code }),
 };

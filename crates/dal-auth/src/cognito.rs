@@ -484,6 +484,19 @@ impl CognitoClient {
         }
     }
 
+    /// Remove a lost software MFA factor only after a valid one-use recovery grant.
+    /// The server role must have cognito-idp:AdminDeleteSoftwareToken on this pool.
+    pub async fn admin_delete_totp(&self, username: &str) -> Result<(), DalError> {
+        self.inner
+            .admin_delete_software_token()
+            .user_pool_id(&self.pool_id)
+            .username(username)
+            .send()
+            .await
+            .map_err(|e| self.cognito_request_error("admin_delete_software_token", None, e))?;
+        Ok(())
+    }
+
     /// Sign out (globally invalidate all tokens) for a user.
     pub async fn admin_sign_out(&self, username: &str) -> Result<(), DalError> {
         self.inner
