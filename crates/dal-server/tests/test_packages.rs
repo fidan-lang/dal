@@ -71,6 +71,62 @@ async fn public_catalog_handles_the_maximum_page_without_overflow() {
     assert!(body["items"].as_array().unwrap().is_empty());
 }
 
+/// Regression: dashboard and public profiles use the owner package listing.
+/// That query must provide every PackageSummary field, including JSONB metadata.
+#[tokio::test]
+async fn user_package_listing_returns_discovery_metadata() {
+    let app = common::TestApp::spawn().await;
+    let db = common::owner_database().await;
+    let user_id = Uuid::new_v4();
+    let package_id = Uuid::new_v4();
+    let username = format!("dashboard-owner-{}", user_id.simple());
+    let package_name = format!("dashboard-pkg-{}", package_id.simple());
+    let keywords = vec!["cli".to_string(), "completion".to_string()];
+    let categories = vec!["command-line".to_string()];
+
+    queries::users::create(
+        &db,
+        user_id,
+        &username,
+        &format!("{username}@example.test"),
+        &user_id.to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+    queries::packages::create(
+        &db,
+        queries::packages::NewPackage {
+            id: package_id,
+            name: &package_name,
+            description: Some("Dashboard regression package"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &keywords,
+            categories: &categories,
+        },
+    )
+    .await
+    .unwrap();
+    queries::packages::add_owner(&db, package_id, user_id, "owner", None)
+        .await
+        .unwrap();
+
+    let uri = format!("/users/{username}/packages?page=1&per_page=20");
+    let (status, response) = common::TestApp::unpack(app.get(&uri).await).await;
+    assert_eq!(status, 200, "owner listing failed: {response}");
+    let entry = response["items"]
+        .as_array()
+        .expect("owner listing must return pagination envelope")
+        .iter()
+        .find(|item| item["name"] == package_name)
+        .expect("the owner's package must be included");
+    assert_eq!(entry["keywords"], json!(keywords));
+    assert_eq!(entry["categories"], json!(categories));
+    assert_eq!(response["total"], 1);
+}
+
 // ── Package lookup ────────────────────────────────────────────────────────────
 
 /// GET /packages/:name for a non-existent name → 404.
