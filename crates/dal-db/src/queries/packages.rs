@@ -128,36 +128,54 @@ pub async fn increment_downloads(
     Ok(())
 }
 
-/// Full-text + keyword search. Returns summary rows.
+/// Full-text package search across name, description, keywords, and categories.
+/// An optional exact, case-insensitive category filter can be used alone.
 pub async fn search(
     pool: &PgPool,
     q: &str,
+    category: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> DalResult<(Vec<PackageSummary>, i64)> {
-    // Use PostgreSQL full-text search on name + description
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM packages
-         WHERE to_tsvector('english', name || ' ' || COALESCE(description,''))
-               @@ plainto_tsquery('english', $1)",
+        "SELECT COUNT(*) FROM packages p
+         WHERE ($1 = '' OR
+                to_tsvector('english',
+                    p.name || ' ' || COALESCE(p.description, '') || ' ' ||
+                    p.keywords::text || ' ' || p.categories::text)
+                @@ plainto_tsquery('english', $1))
+           AND ($2::text IS NULL OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(p.categories) AS c(value)
+                WHERE lower(c.value) = lower($2::text)
+           ))",
     )
     .bind(q)
+    .bind(category)
     .fetch_one(pool)
     .await?;
 
     let items = sqlx::query_as::<_, PackageSummary>(
-        "SELECT p.id, p.name, p.description, p.license, p.downloads,
+        "SELECT p.id, p.name, p.description, p.license, p.keywords, p.categories,
+                p.downloads,
                 (SELECT v.version FROM package_versions v
                  WHERE v.package_id = p.id AND NOT v.yanked
                  ORDER BY v.created_at DESC LIMIT 1) AS latest_version,
                 p.updated_at
          FROM packages p
-         WHERE to_tsvector('english', p.name || ' ' || COALESCE(p.description,''))
-               @@ plainto_tsquery('english', $1)
-         ORDER BY p.downloads DESC
-         LIMIT $2 OFFSET $3",
+         WHERE ($1 = '' OR
+                to_tsvector('english',
+                    p.name || ' ' || COALESCE(p.description, '') || ' ' ||
+                    p.keywords::text || ' ' || p.categories::text)
+                @@ plainto_tsquery('english', $1))
+           AND ($2::text IS NULL OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(p.categories) AS c(value)
+                WHERE lower(c.value) = lower($2::text)
+           ))
+         ORDER BY p.downloads DESC, p.name ASC
+         LIMIT $3 OFFSET $4",
     )
     .bind(q)
+    .bind(category)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -173,13 +191,14 @@ pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> DalResult<(Vec<Pack
         .await?;
 
     let items = sqlx::query_as::<_, PackageSummary>(
-        "SELECT p.id, p.name, p.description, p.license, p.downloads,
+        "SELECT p.id, p.name, p.description, p.license, p.keywords, p.categories,
+                p.downloads,
                 (SELECT v.version FROM package_versions v
                  WHERE v.package_id = p.id AND NOT v.yanked
                  ORDER BY v.created_at DESC LIMIT 1) AS latest_version,
                 p.updated_at
          FROM packages p
-         ORDER BY p.downloads DESC
+         ORDER BY p.downloads DESC, p.name ASC
          LIMIT $1 OFFSET $2",
     )
     .bind(limit)

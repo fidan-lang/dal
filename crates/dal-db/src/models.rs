@@ -87,6 +87,8 @@ pub struct PackageSummary {
     pub name: String,
     pub description: Option<String>,
     pub license: Option<String>,
+    pub keywords: sqlx::types::Json<Vec<String>>,
+    pub categories: sqlx::types::Json<Vec<String>>,
     pub downloads: i64,
     pub latest_version: Option<String>,
     pub updated_at: DateTime<Utc>,

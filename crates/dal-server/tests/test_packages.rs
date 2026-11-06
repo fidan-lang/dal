@@ -106,6 +106,86 @@ async fn search_without_query_does_not_panic() {
     assert_ne!(res.status().as_u16(), 500);
 }
 
+#[tokio::test]
+async fn search_matches_keywords_and_category_without_leaking_unrelated_packages() {
+    let app = common::TestApp::spawn().await;
+    let db = common::owner_database().await;
+    let unique = Uuid::new_v4().simple().to_string();
+    let package_name = format!("tags-{}", &unique[..12]);
+    let keyword = format!("kw{}", &unique[..12]);
+    let keywords = vec![keyword.clone()];
+    let categories = vec!["command-line".to_string()];
+    queries::packages::create(
+        &db,
+        queries::packages::NewPackage {
+            id: Uuid::new_v4(),
+            name: &package_name,
+            description: Some("Metadata search integration fixture"),
+            repository: None,
+            homepage: None,
+            license: None,
+            keywords: &keywords,
+            categories: &categories,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (status, by_keyword) =
+        common::TestApp::unpack(app.get(&format!("/search?q={keyword}")).await).await;
+    assert_eq!(status, 200);
+    assert!(
+        by_keyword["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == package_name)
+    );
+    let result = by_keyword["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == package_name)
+        .unwrap();
+    assert_eq!(result["keywords"][0], keyword);
+    assert_eq!(result["categories"][0], "command-line");
+
+    let (status, by_category) =
+        common::TestApp::unpack(app.get("/search?category=COMMAND-LINE").await).await;
+    assert_eq!(status, 200);
+    assert!(
+        by_category["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == package_name)
+    );
+
+    let (status, mismatch) = common::TestApp::unpack(
+        app.get(&format!("/search?q={keyword}&category=testing"))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        !mismatch["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == package_name)
+    );
+
+    let (status, listing) = common::TestApp::unpack(app.get("/packages?per_page=100").await).await;
+    assert_eq!(status, 200);
+    let listed = listing["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == package_name)
+        .unwrap();
+    assert_eq!(listed["keywords"][0], keyword);
+}
+
 // ── Sparse index ──────────────────────────────────────────────────────────────
 
 /// GET /index/:name for non-existent package → 404 (not 500).

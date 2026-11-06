@@ -558,15 +558,24 @@ export const packages = {
   get: async (f: FetchFn, name: string) =>
     normalizePackage(await request<unknown>(f, "GET", `/packages/${name}`)),
 
-  search: async (f: FetchFn, q: string, page = 1, per_page = 20) =>
-    normalizePage(
-      await request<unknown>(
-        f,
-        "GET",
-        `/search?q=${encodeURIComponent(q)}&page=${page}&per_page=${per_page}`,
-      ),
+  search: async (
+    f: FetchFn,
+    q: string,
+    page = 1,
+    per_page = 20,
+    category = "",
+  ) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(per_page),
+    });
+    if (q.trim()) params.set("q", q.trim());
+    if (category.trim()) params.set("category", category.trim());
+    return normalizePage(
+      await request<unknown>(f, "GET", `/search?${params}`),
       normalizePackage,
-    ),
+    );
+  },
 };
 
 // ── Versions ─────────────────────────────────────────────────────────────────
