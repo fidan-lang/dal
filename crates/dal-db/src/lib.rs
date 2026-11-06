@@ -70,6 +70,8 @@ pub async fn verify_runtime(pool: &PgPool, expected: &str) -> anyhow::Result<()>
         "user_mfa",
         "mfa_sessions",
         "mfa_id_tokens",
+        "mfa_recovery_codes",
+        "mfa_recovery_grants",
     ];
     let protected: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=ANY($1) AND c.relrowsecurity AND c.relforcerowsecurity")
         .bind(PROTECTED_TABLES).fetch_one(pool).await?;

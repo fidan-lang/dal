@@ -22,6 +22,8 @@ pub fn router() -> Router<AppState> {
         .route("/auth/mfa/setup", post(setup))
         .route("/auth/mfa/verify", post(verify))
         .route("/auth/mfa/disable", post(disable))
+        .route("/auth/mfa/recovery-codes", post(generate_recovery_codes))
+        .route("/auth/mfa/recover", post(recover_with_code))
 }
 pub async fn no_store(mut response: axum::response::Response) -> axum::response::Response {
     response
@@ -227,6 +229,10 @@ async fn verify(
     // An earlier failed verification may have rolled back its provisional guard.
     queries::users::set_mfa_required(&mut tx, user.id, true).await?;
     queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
+    sqlx::query("SELECT dal_security.clear_recovery_codes($1)")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     state.mfa.revoke(user.id);
     state.cognito.admin_sign_out(&user.username).await?;
@@ -252,11 +258,101 @@ async fn disable(
     let tokens = reauthenticate(&state, &user, &body, true).await?;
     state.cognito.set_totp(&tokens.access, false).await?;
     queries::users::set_mfa_required(&mut tx, user.id, false).await?;
+    sqlx::query("SELECT dal_security.clear_recovery_codes($1)")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
     queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
     tx.commit().await?;
     state.mfa.revoke(user.id);
     state.cognito.admin_sign_out(&user.username).await?;
     Ok(Json(
         json!({"message":"Authenticator disabled. Sign in again."}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct RecoveryCodeBody {
+    code: String,
+}
+
+async fn generate_recovery_codes(
+    State(state): State<AppState>,
+    VerifiedSession(user): VerifiedSession,
+    Json(body): Json<Reauthenticate>,
+) -> Result<Json<Value>, DalError> {
+    if !state.cfg.totp_enabled {
+        return Err(DalError::Unauthorized);
+    }
+    let _change = state.mfa.change()?;
+    // A leaked browser session alone cannot rotate recovery codes.
+    if !queries::users::mfa_required(&state.db, user.id).await?
+        || !state.cognito.totp_enabled(&user.username).await?
+    {
+        return Err(DalError::Unauthorized);
+    }
+    let _verified = reauthenticate(&state, &user, &body, true).await?;
+    let generated: Vec<_> = (0..10).map(|_| dal_auth::generate_api_token()).collect();
+    let hashes: Vec<String> = generated.iter().map(|token| token.hash.clone()).collect();
+    let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
+    sqlx::query("SELECT dal_security.replace_recovery_codes($1,$2)")
+        .bind(user.id)
+        .bind(&hashes)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({
+        "codes": generated.into_iter().map(|token| token.raw).collect::<Vec<_>>(),
+        "message": "Store these codes offline now. They will never be shown again."
+    })))
+}
+
+async fn recover_with_code(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RecoveryCodeBody>,
+) -> Result<(HeaderMap, Json<Value>), DalError> {
+    let _change = state.mfa.change()?;
+    let handle = cookie(&headers, PENDING_COOKIE)?;
+    let pending = state.mfa.take(&handle)?;
+    let PendingKind::Login { username, .. } = &pending.kind else {
+        return Err(DalError::Unauthorized);
+    };
+    let user = queries::users::auth_by_id(&state.db, pending.user_id)
+        .await?
+        .ok_or(DalError::Unauthorized)?;
+    if !pending.valid_for(&user) || !user.email_verified || username != &user.username {
+        return Err(DalError::Unauthorized);
+    }
+    if !dal_auth::api_token::validate_api_token_format(&body.code) {
+        state.mfa.retry(&handle, pending);
+        return Err(DalError::Unauthorized);
+    }
+    let proof = dal_auth::generate_api_token();
+    let consumed: bool = sqlx::query_scalar("SELECT dal_security.consume_recovery_code($1,$2,$3)")
+        .bind(user.id)
+        .bind(dal_auth::hash_token(&body.code))
+        .bind(&proof.hash)
+        .fetch_one(&state.db)
+        .await?;
+    if !consumed {
+        state.mfa.retry(&handle, pending);
+        return Err(DalError::Unauthorized);
+    }
+    // Fail closed: code is consumed before provider I/O. Cognito must confirm
+    // factor removal before the durable MFA downgrade guard can be cleared.
+    state.cognito.admin_delete_totp(&user.username).await?;
+    sqlx::query("SELECT dal_security.finish_recovery($1,$2)")
+        .bind(user.id)
+        .bind(&proof.hash)
+        .execute(&state.db)
+        .await?;
+    state.mfa.revoke(user.id);
+    state.cognito.admin_sign_out(&user.username).await?;
+    Ok((
+        pending_headers(PENDING_COOKIE, "", &state.cfg.base_url)?,
+        Json(
+            json!({"message":"Recovery accepted. Sign in again and set up a new authenticator. All prior sessions and API tokens were revoked."}),
+        ),
     ))
 }

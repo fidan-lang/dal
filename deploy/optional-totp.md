@@ -108,3 +108,23 @@ require separate authorization and must be rehearsed on a disposable pool first.
 AWS references: [TOTP behavior](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-mfa-totp.html),
 [pool configuration](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserPoolMfaConfig.html),
 [operator reset](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteSoftwareToken.html).
+
+
+## One-time user recovery codes (migration 0013)
+
+After enrollment and sign-in, a user can generate ten 256-bit one-use recovery codes
+in `/settings/security`, using their existing password and current TOTP code.
+Only SHA-256 hashes are persisted; plaintext is returned once with no-store
+headers. Regeneration invalidates earlier codes. A recovery code is accepted
+only after a verified Cognito password created a three-minute pending MFA cookie.
+It does NOT create an authenticated DAL session. Instead it deletes the Cognito
+TOTP registration using `AdminDeleteSoftwareToken`, invalidates all current DAL
+sessions and API tokens, clears the durable MFA guard, and requires a fresh
+password sign-in and immediate new authenticator enrollment.
+
+The server role (not worker) must explicitly receive
+`cognito-idp:AdminDeleteSoftwareToken` scoped to the existing user-pool ARN.
+Do not enable this public recovery flow until migration 0013, SDK support,
+role policy, Cognito-local integration tests and browser checks are validated.
+Failure between provider deletion and database finalization intentionally fails
+closed and needs operator reconciliation; never clear the guard on AWS errors.
