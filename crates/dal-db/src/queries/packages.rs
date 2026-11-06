@@ -305,7 +305,8 @@ pub async fn list_by_owner(
         .await?;
 
     let items = sqlx::query_as::<_, PackageSummary>(
-        "SELECT p.id, p.name, p.description, p.license, p.downloads,
+        "SELECT p.id, p.name, p.description, p.license, p.keywords, p.categories,
+                p.downloads,
                 (SELECT v.version FROM package_versions v
                  WHERE v.package_id = p.id AND NOT v.yanked
                  ORDER BY v.created_at DESC LIMIT 1) AS latest_version,
