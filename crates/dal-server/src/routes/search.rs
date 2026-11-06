@@ -20,7 +20,10 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Deserialize)]
 struct SearchParams {
+    #[serde(default)]
     q: String,
+    #[serde(default)]
+    category: Option<String>,
     #[serde(flatten)]
     page: PageParams,
 }
@@ -29,10 +32,15 @@ async fn search(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Value>, DalError> {
-    let q = params.q.trim().to_string();
-    if q.is_empty() {
+    let q = params.q.trim();
+    let category = params
+        .category
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    if q.is_empty() && category.is_none() {
         return Err(DalError::Validation(
-            "search query `q` must not be empty".into(),
+            "provide a search query or category".into(),
         ));
     }
     if q.len() > 128 {
@@ -40,9 +48,20 @@ async fn search(
             "search query must be ≤ 128 chars".into(),
         ));
     }
+    if category.is_some_and(|value| value.len() > 64) {
+        return Err(DalError::Validation(
+            "category filter must be ≤ 64 chars".into(),
+        ));
+    }
 
-    let (items, total) =
-        queries::packages::search(&state.db, &q, params.page.limit(), params.page.offset()).await?;
+    let (items, total) = queries::packages::search(
+        &state.db,
+        q,
+        category,
+        params.page.limit(),
+        params.page.offset(),
+    )
+    .await?;
 
     let page = Page::new(items, &params.page, total);
     Ok(Json(serde_json::to_value(&page).unwrap_or_default()))

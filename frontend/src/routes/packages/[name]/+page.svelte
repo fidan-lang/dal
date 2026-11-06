@@ -122,6 +122,18 @@
             {/each}
           </div>
         {/if}
+        {#if data.pkg.categories?.length}
+          <div class="flex flex-wrap gap-1.5 mt-3">
+            {#each data.pkg.categories as category}
+              <a
+                href="/search?category={encodeURIComponent(category)}"
+                class="text-xs text-[var(--color-primary-light)] bg-[var(--color-primary)]/10 px-2 py-0.5 rounded border border-[var(--color-primary)]/25 hover:border-[var(--color-primary)] transition-colors"
+              >
+                {category}
+              </a>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <!-- Install snippet -->
