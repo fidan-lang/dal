@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import QRCode from "qrcode";
+  import CopyButton from "$lib/components/CopyButton.svelte";
   import { mfa } from "$lib/api";
   import { currentUser } from "$lib/stores/auth";
   let enabled = $state<boolean | null>(null);
@@ -37,6 +38,7 @@
     recoveryCodes = [];
     enrollmentCodes = [];
   });
+
   function downloadEnrollmentCodes() {
     if (enrollmentCodes.length !== 10) return;
     const body = [
@@ -383,22 +385,21 @@
             class="overflow-x-auto select-all rounded-[var(--radius-md)] p-3 bg-[var(--color-surface-3)] text-xs">{recoveryCodes.join(
               "\n",
             )}</pre>
-          <button
-            type="button"
-            onclick={() =>
-              navigator.clipboard.writeText(recoveryCodes.join("\n"))}
-            class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
-            >Copy codes</button
-          >
-          <button
-            type="button"
-            onclick={() => {
-              recoveryCodes = [];
-              recoveryMessage = "";
-            }}
-            class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
-            >Hide codes</button
-          >
+          <div class="flex flex-wrap items-center gap-3">
+            <CopyButton
+              text={recoveryCodes.join("\n")}
+              label="recovery codes"
+            />
+            <button
+              type="button"
+              onclick={() => {
+                recoveryCodes = [];
+                recoveryMessage = "";
+              }}
+              class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
+              >Hide codes</button
+            >
+          </div>
         {/if}
       </section>
     {/if}
