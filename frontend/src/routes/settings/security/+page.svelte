@@ -18,6 +18,9 @@
   let recoveryCurrentCode = $state("");
   let recoveryCodes = $state<string[]>([]);
   let recoveryMessage = $state("");
+  let copiedRecoveryCodes = $state(false);
+  let recoveryCopyFailed = $state(false);
+  let recoveryCopyTimer: ReturnType<typeof setTimeout> | undefined;
   // Shown only in memory after successful enrollment. The server has already
   // revoked all sessions; never put these secrets in URLs or local storage.
   let enrollmentCodes = $state<string[]>([]);
@@ -34,9 +37,53 @@
   }
   onDestroy(() => {
     clearSetup();
+    if (recoveryCopyTimer) clearTimeout(recoveryCopyTimer);
     recoveryCodes = [];
     enrollmentCodes = [];
   });
+
+  function resetRecoveryCopyFeedback() {
+    if (recoveryCopyTimer) clearTimeout(recoveryCopyTimer);
+    copiedRecoveryCodes = false;
+    recoveryCopyFailed = false;
+  }
+
+  async function copyRecoveryCodes() {
+    if (!recoveryCodes.length) return;
+    resetRecoveryCopyFeedback();
+    const plaintext = recoveryCodes.join("\n");
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(plaintext);
+        copied = true;
+      }
+    } catch {
+      // Clipboard permissions can be disabled; attempt the legacy fallback.
+    }
+    if (!copied) {
+      const field = document.createElement("textarea");
+      field.value = plaintext;
+      field.readOnly = true;
+      field.style.position = "fixed";
+      field.style.left = "-9999px";
+      document.body.appendChild(field);
+      try {
+        field.select();
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      } finally {
+        field.remove();
+      }
+    }
+    copiedRecoveryCodes = copied;
+    recoveryCopyFailed = !copied;
+    recoveryCopyTimer = setTimeout(() => {
+      copiedRecoveryCodes = false;
+      recoveryCopyFailed = false;
+    }, 2000);
+  }
   function downloadEnrollmentCodes() {
     if (enrollmentCodes.length !== 10) return;
     const body = [
@@ -69,6 +116,7 @@
     error = "";
     recoveryCodes = [];
     recoveryMessage = "";
+    resetRecoveryCopyFeedback();
     try {
       const result = await mfa.generateRecoveryCodes(
         fetch,
@@ -383,22 +431,58 @@
             class="overflow-x-auto select-all rounded-[var(--radius-md)] p-3 bg-[var(--color-surface-3)] text-xs">{recoveryCodes.join(
               "\n",
             )}</pre>
-          <button
-            type="button"
-            onclick={() =>
-              navigator.clipboard.writeText(recoveryCodes.join("\n"))}
-            class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
-            >Copy codes</button
-          >
-          <button
-            type="button"
-            onclick={() => {
-              recoveryCodes = [];
-              recoveryMessage = "";
-            }}
-            class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
-            >Hide codes</button
-          >
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onclick={() => void copyRecoveryCodes()}
+              aria-label={copiedRecoveryCodes
+                ? "Recovery codes copied"
+                : "Copy recovery codes"}
+              title={recoveryCopyFailed
+                ? "Copy failed"
+                : copiedRecoveryCodes
+                  ? "Copied!"
+                  : "Copy recovery codes"}
+              class="flex h-9 w-9 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-primary)]/10 hover:text-[var(--color-primary-light)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            >
+              <svg
+                aria-hidden="true"
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                {#if copiedRecoveryCodes}
+                  <path d="M20 6 9 17l-5-5" />
+                {:else}
+                  <rect x="8" y="8" width="13" height="13" rx="2" />
+                  <path
+                    d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"
+                  />
+                {/if}
+              </svg>
+            </button>
+            <button
+              type="button"
+              onclick={() => {
+                recoveryCodes = [];
+                recoveryMessage = "";
+                resetRecoveryCopyFeedback();
+              }}
+              class="px-4 py-2 border border-[var(--color-border)] rounded-[var(--radius-md)]"
+              >Hide codes</button
+            >
+            <span class="sr-only" aria-live="polite">
+              {recoveryCopyFailed
+                ? "Could not copy recovery codes. Please select and copy them manually."
+                : copiedRecoveryCodes
+                  ? "Recovery codes copied to clipboard."
+                  : ""}
+            </span>
+          </div>
         {/if}
       </section>
     {/if}
