@@ -706,7 +706,12 @@ export const mfa = {
       { password, current_code },
     ),
   verify: (f: FetchFn, code: string) =>
-    request<{ message: string }>(f, "POST", "/auth/mfa/verify", { code }),
+    request<{ message: string; codes: string[] }>(
+      f,
+      "POST",
+      "/auth/mfa/verify",
+      { code },
+    ),
   disable: (f: FetchFn, password: string, current_code: string) =>
     request<{ message: string }>(f, "POST", "/auth/mfa/disable", {
       password,

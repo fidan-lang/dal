@@ -224,23 +224,28 @@ async fn verify(
         return Err(DalError::Unauthorized);
     }
     state.cognito.set_totp(access, true).await?;
+    // Prepare the ten fresh one-use codes after Cognito confirms enrollment.
+    // Their hashes are written atomically with the MFA session revocation.
+    let (recovery_codes, recovery_hashes) = new_recovery_codes();
     let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     queries::users::lock_mfa(&mut tx, user.id).await?;
     // An earlier failed verification may have rolled back its provisional guard.
     queries::users::set_mfa_required(&mut tx, user.id, true).await?;
-    queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
-    sqlx::query("SELECT dal_security.clear_recovery_codes($1)")
+    sqlx::query("SELECT dal_security.replace_recovery_codes($1,$2)")
         .bind(user.id)
+        .bind(&recovery_hashes)
         .execute(&mut *tx)
         .await?;
+    queries::users::advance_session_invalid_before(&mut *tx, user.id, chrono::Utc::now()).await?;
     tx.commit().await?;
     state.mfa.revoke(user.id);
     state.cognito.admin_sign_out(&user.username).await?;
     Ok((
         pending_headers(SETUP_COOKIE, "", &state.cfg.base_url)?,
-        Json(
-            json!({"message":"Authenticator enabled. Sign in again with your password and authenticator code."}),
-        ),
+        Json(json!({
+            "message": "Authenticator enabled. Save these recovery codes before signing in again.",
+            "codes": recovery_codes,
+        })),
     ))
 }
 async fn disable(
@@ -276,6 +281,15 @@ struct RecoveryCodeBody {
     code: String,
 }
 
+/// Both first-time enrollment and deliberate rotation use the same code generator.
+/// Only hashes are ever written to PostgreSQL.
+fn new_recovery_codes() -> (Vec<String>, Vec<String>) {
+    let generated: Vec<_> = (0..10).map(|_| dal_auth::generate_api_token()).collect();
+    let hashes = generated.iter().map(|token| token.hash.clone()).collect();
+    let codes = generated.into_iter().map(|token| token.raw).collect();
+    (codes, hashes)
+}
+
 async fn generate_recovery_codes(
     State(state): State<AppState>,
     VerifiedSession(user): VerifiedSession,
@@ -292,8 +306,7 @@ async fn generate_recovery_codes(
         return Err(DalError::Unauthorized);
     }
     let _verified = reauthenticate(&state, &user, &body, true).await?;
-    let generated: Vec<_> = (0..10).map(|_| dal_auth::generate_api_token()).collect();
-    let hashes: Vec<String> = generated.iter().map(|token| token.hash.clone()).collect();
+    let (codes, hashes) = new_recovery_codes();
     let mut tx = dal_db::actor_transaction(&state.db, user.id, None).await?;
     sqlx::query("SELECT dal_security.replace_recovery_codes($1,$2)")
         .bind(user.id)
@@ -302,7 +315,7 @@ async fn generate_recovery_codes(
         .await?;
     tx.commit().await?;
     Ok(Json(json!({
-        "codes": generated.into_iter().map(|token| token.raw).collect::<Vec<_>>(),
+        "codes": codes,
         "message": "Store these codes offline now. They will never be shown again."
     })))
 }
