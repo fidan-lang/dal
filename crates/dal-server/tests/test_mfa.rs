@@ -197,6 +197,22 @@ async fn cognito_managed_setup_challenge_replay_disable_and_downgrade_guard() {
         .await;
     assert_eq!(valid.status(), 200);
     no_session(&valid);
+    let (_, confirmation) = common::TestApp::unpack(valid).await;
+    let codes = confirmation["codes"]
+        .as_array()
+        .expect("one-time recovery codes");
+    assert_eq!(codes.len(), 10);
+    let first_code = codes[0].as_str().expect("raw recovery code");
+    assert!(dal_auth::api_token::validate_api_token_format(first_code));
+    let stored_hashes: Vec<String> =
+        sqlx::query_scalar("SELECT code_hash FROM mfa_recovery_codes WHERE user_id=$1")
+            .bind(id)
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(stored_hashes.len(), 10);
+    assert!(stored_hashes.contains(&dal_auth::hash_token(first_code)));
+    assert!(!stored_hashes.contains(&first_code.to_owned()));
     assert!(enabled.load(Ordering::SeqCst));
     assert!(dal_db::queries::users::mfa_required(&db, id).await.unwrap());
     // Cognito JWT iat/auth_time are integral; the previous full cutoff second is revoked.
