@@ -165,10 +165,11 @@
         >
           <p class="text-xs text-[var(--color-text-muted)] mb-2">Install</p>
           <div class="flex items-center justify-between gap-3">
-            <code
-              class="min-w-0 break-all font-mono text-sm text-[var(--color-primary-light)]"
-            >
-              {installCommand}
+            <code class="min-w-0 break-all font-mono text-sm">
+              <span class="text-[var(--color-primary-light)]">fidan dal</span
+              >{" "}
+              <span class="text-[var(--color-text)]">add</span>{" "}
+              <span class="text-[var(--color-warning)]">{data.pkg.name}</span>
             </code>
             <button
               type="button"
