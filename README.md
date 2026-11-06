@@ -147,7 +147,7 @@ This starts a dedicated disposable PostgreSQL/LocalStack project, private Cognit
 API, worker and mail sink using fake credentials and literal IPv4 loopback. It ignores production `.env` files,
 requires free local ports, and cleans up only its own processes/containers. The browser
 lifecycle uses the sibling `../fidan/target/debug/fidan` (`.exe` on Windows) and local
-`../args` candidate; build the matching compiler first. Captured emails contain local
+`../args` package; build the matching compiler first. Captured emails contain local
 verification/reset tokens; keep `target/audit-logs/` private and ignored. Browser tests use the Playwright-pinned Chromium revision, matching CI; `DAL_BROWSER_CHANNEL=chrome` explicitly selects system Chrome for comparison.
 
 For built local OCI images, run `node scripts/test-images.mjs`. It verifies non-root,
@@ -248,11 +248,11 @@ Token creation/revocation requires a verified interactive session; publishing to
 
 ---
 
-## Package contract and relaunch status
+## Package contract and compatibility
 
 The canonical client is `fidan dal`. Package names such as `args` need no `fidan-`
-prefix. This local relaunch candidate accepts optional `[package].fidan` SemVer
-requirements; omission preserves legacy compatibility. The matching client validates
+prefix. DAL accepts optional `[package].fidan` SemVer requirements;
+omission preserves legacy compatibility. The matching client validates
 compiler compatibility and SHA-256 before installation, resolves intersecting graphs
 with bounded backtracking, and records checksums in schema-1 `dal.lock` files.
 New resolution excludes yanked versions; an existing exact checksum lock may reinstall
@@ -264,8 +264,6 @@ entries. Only regular files/directories with portable relative paths are accepte
 Publishing holds a package-scoped database lock and uses per-attempt object keys;
 unknown commit outcomes retain the object for reconciliation. API uploads are limited
 to two concurrent archive operations per process; lower `DAL_MAX_UPLOAD_BYTES` if needed.
-
-No production relaunch or public `args` package is claimed by this branch.
 
 ---
 
@@ -286,9 +284,8 @@ installation, publishing, dependency resolution, caching, and legitimate CI/CD.
 Package authors retain their rights; each package's own license governs reuse
 and redistribution.
 
-See [TRADEMARKS.md](TRADEMARKS.md) for separate branding guidance and
-[REGISTRY_TERMS.md](REGISTRY_TERMS.md) for the official hosted service's draft
-acceptable-use terms, which require legal review before publication/enforcement.
+See [TRADEMARKS.md](TRADEMARKS.md) for branding and
+[REGISTRY_TERMS.md](REGISTRY_TERMS.md) for the hosted registry service policy.
 
 Copyright © 2026 Kaan Gönüldinc (AppSolves)
 
@@ -300,15 +297,15 @@ Official prebuilt `ghcr.io/fidan-lang/dal/server` and
 Apache-2.0 source remains available for independent builds and hosting.
 See [private image release requirements](CONTRIBUTING.md#private-image-release-requirements).
 
-Production DAL must be approved and operational after Fidan 1.1.0 stable and its
-protocol-8 LLVM helper are released, and **before** the first args 0.1.0 publication.
-No production launch or package/image publication follows automatically from CI.
+Production deployment uses verified private GHCR images with immutable digests.
+Successful main-branch CI triggers the protected image-release and deployment
+workflows; package publication remains an explicit authenticated CLI action.
 
 ## Public download protection
 
 Public package installation remains anonymous. The default `stream` mode serves
 archives from private storage through the API rather than exposing reusable R2
-signed URLs. `config/public-read-policy.json` owns provisional defaults: separate
+signed URLs. `config/public-read-policy.json` defines operational defaults: separate
 per-IP metadata/download quotas and bounded concurrent metadata requests/download
 streams. Download permits are held until EOF, disconnect, failure or deadline;
 stream lengths are checked. Excess requests return 429 with `Retry-After`.
@@ -350,13 +347,16 @@ replace the leaked-credential rule or upgrade a paid plan automatically. Cache
 rules do not by themselves stop bulk downloading; edge quotas and cache behavior
 still need provider validation. Keep R2 public endpoints disabled for packages.
 
-The API container binds only loopback in the production Compose example. Before
-launch, restrict the actual host proxy to the approved Cloudflare path/tunnel and
-verify direct-origin denial. Only that verified proxy may supply an overwritten,
-single client-IP header through `DAL_TRUSTED_PROXIES`. Confirm caches, 429/retry,
-shared-IP installs and security monitoring on the real topology before production.
-These source changes do not deploy DAL, publish images, or apply Cloudflare rules.
+The API container binds only loopback in the production Compose configuration.
+Keep the host proxy restricted to the approved Cloudflare path/tunnel and verify
+direct-origin denial. Only the verified proxy may supply the canonical client-IP
+header through `DAL_TRUSTED_PROXIES`. Monitor caches, 429/retry behavior, shared-IP
+installs and security signals on the production topology. The preparation scripts
+do not deploy DAL, publish images, or apply Cloudflare rules.
 
-Optional user-controlled authenticator MFA, its API contract and the pending Cognito rollout/recovery procedure are described in [deploy/optional-totp.md](deploy/optional-totp.md). Enabling it requires a separately approved OPTIONAL Cognito configuration; normal package installation stays anonymous.
+Optional user-controlled authenticator MFA, its production configuration, and
+one-time recovery-code procedures are described in
+[deploy/optional-totp.md](deploy/optional-totp.md). Public package installation
+stays anonymous.
 
 Private image scan reproduction, residual-risk handling and owner-only GHCR access gates are maintained in [deploy/container-security.md](deploy/container-security.md).

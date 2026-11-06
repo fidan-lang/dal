@@ -1,130 +1,95 @@
 # Optional Cognito authenticator MFA
 
-This is a source rollout procedure, not evidence of a live Cognito change. The
-existing pool is expected to remain `MfaConfiguration=OFF` until operator approval.
+## Production configuration
 
-## Contract
+The DAL production Cognito user pool uses `MfaConfiguration=OPTIONAL` with
+software-token MFA enabled. The DAL API has `DAL_TOTP_ENABLED=true`. Accounts
+without TOTP can still use password login; enrolled accounts must complete a
+Cognito authenticator challenge. Public package downloads remain anonymous.
 
-- Password login is unchanged for accounts without MFA. `POST /auth/login` returns
-  `{"mfa_required":true,"expires_in":180}` for a software-token challenge. Only an
-  HttpOnly, SameSite=Strict, three-minute opaque pending cookie is set. Cognito's
-  challenge session is never returned to the browser. `POST /auth/mfa/challenge`
-  accepts `{"code":"123456"}` and issues session cookies only after full Cognito
-  authentication and DAL identity/revocation checks succeed.
-- `/settings/security` shows status, locally generated QR/manual setup, verification,
-  replacement and disable. Setup/disable require a verified interactive session,
-  freshly checked password and the current code when MFA is enabled. API tokens
-  cannot administer MFA. `/auth/mfa/setup`, `/verify`, `/disable` are JSON POSTs;
-  `/auth/mfa/status` is a session-only GET. All auth responses are `no-store`.
-- Cognito creates, stores and verifies TOTP secrets. DAL retains a persistent
-  boolean downgrade guard, hashes binding completed MFA ID/refresh tokens, and
-  bounded transient login/setup state (1,024 entries,
-  three-minute lifetime, five attempts). Handles are random 256-bit values stored
-  only by hash. A handle is consumed before provider I/O and cannot be replayed
-  after completion. Passwords, codes, secrets and provider sessions are not logged.
-- Successful changes advance DAL's revocation epoch and request Cognito global
-  sign-out; existing browser sessions and refreshes are rejected. Existing scoped
-  API tokens keep their separate authorization contract. Use a fresh code to sign
-  in again. Email verification, password reset and account deletion remain intact;
-  resetting a password does not disable MFA. Direct JWTs and refresh tokens without
-  a completed DAL MFA grant cannot bypass the durable guard. Revocation removes
-  grants atomically.
-- Pending state is process-local: restarting loses pending work safely. The
-  supported initial topology is one API process. Do not horizontally scale this
-  stateful challenge flow without a shared, atomic, expiring challenge store or
-  authenticated affinity; failure must restart authentication, never bypass MFA.
+In deployment, `DAL_TOTP_ENABLED` is injected into the API container with the
+production Compose configuration. Restarting an existing container without
+re-creation does not update environment variables. Verify the effective value
+in the recreated container and confirm `/readyz` reports `status: ready`.
 
-## Approved operator rollout (not executed by source tests)
+To inspect Cognito configuration independently:
 
-1. Back up the database and record the exact image digests and current Cognito
-   pool/client configuration. Review IAM and public-origin controls. Apply migration
-   `0011_optional_mfa.sql` using the established migration process. Deploy reviewed
-   server/frontend together with `DAL_TOTP_ENABLED=false` first. Confirm existing
-   login, refresh, email verification/reset, scoped API tokens and downloads.
-2. Read the selected pool with `aws cognito-idp get-user-pool-mfa-config
-   --user-pool-id "$POOL_ID"` and the exact app client with
-   `describe-user-pool-client`. Do not infer their live settings from this file.
-   Preserve the existing client and all unrelated settings. It must support
-   USER_PASSWORD_AUTH/refresh and the user access-token scope
-   `aws.cognito.signin.user.admin`. Do not enable SMS/email MFA, remembered-device
-   MFA suppression or a second fallback factor during this rollout.
-3. After explicit provider approval, apply only:
+```sh
+aws cognito-idp get-user-pool-mfa-config --user-pool-id "$POOL_ID"
+```
 
-   ```sh
-   aws cognito-idp set-user-pool-mfa-config \
-     --user-pool-id "$POOL_ID" \
-     --mfa-configuration OPTIONAL \
-     --software-token-mfa-configuration Enabled=true
-   ```
+The selected pool should report `OPTIONAL` and enabled software-token MFA.
+Do not change the pool to `ON` or `OFF` for normal operation.
 
-   Review and preserve any existing SMS/email configuration before issuing this
-   request. Read back the result: OPTIONAL, software token enabled. Never use ON.
-   Keep the client's authentication session validity at three minutes. The server
-   uses `AdminGetUser` (already used for registration), and user-authorized
-   AssociateSoftwareToken, VerifySoftwareToken, SetUserMFAPreference,
-   RespondToAuthChallenge. Those user-authorized operations use Cognito tokens,
-   not additional administrator IAM grants. Do not grant reset/recovery admin
-   permissions to the server.
-4. Set `DAL_TOTP_ENABLED=true` on the reviewed deployment, not in production here.
-   Test a disposable approved canary user: password-only before enrollment, invalid
-   setup code, verified enrollment, missing/incorrect login code, replay, replacement,
-   disable and session revocation. Check a separate non-enrolled user still logs in
-   with only a password. Check UI origin/CORS, Secure cookies, no-store and logs.
-5. Stop new enrollment with `DAL_TOTP_ENABLED=false` if needed. Existing MFA login
-   and authenticated disable must stay supported. Do NOT set the pool OFF or roll
-   back to a server that cannot process MFA once any user enrolls. Keep the database
-   downgrade guard. Enrollment commits its downgrade guard before provider verification. Definite
-   invalid-code responses restore previously disabled enrollment only while its
-   session epoch is unchanged; a delayed response cannot undo a completed concurrent
-   enrollment. Successful enrollment reasserts the guard atomically with revocation. Ambiguous provider
-   failures retain the guard and can require operator reconciliation. Provider/DB
-   partial failures fail closed; reconcile account
-   preference and the durable guard under an approved incident procedure.
+## Authentication and enrollment
 
-## Lost authenticator recovery
+- Password login returns `{"mfa_required":true,"expires_in":180}` for enrolled
+  users and creates an HttpOnly, SameSite=Strict, three-minute pending challenge
+  cookie. The Cognito challenge session is never exposed to the browser.
+- `POST /auth/mfa/challenge` validates the six-digit authenticator code with
+  Cognito and creates DAL sessions only after completed identity and revocation
+  checks. Unenrolled users continue through the regular password flow.
+- `/settings/security` supports enrollment, replacement, disabling, and recovery
+  code management. MFA changes require a verified interactive session and fresh
+  password authentication; replacing or disabling an existing authenticator also
+  requires its current code. API tokens cannot administer MFA.
+- `POST /auth/mfa/setup` begins enrollment. `POST /auth/mfa/verify` confirms the
+  new TOTP factor, stores ten hashed recovery-code grants, and returns their
+  plaintext only once for display and download. Existing sessions are revoked
+  immediately; users confirm that they saved the codes before navigating to
+  sign-in. No authentication is restored by merely viewing the codes.
+- Completed enrollment sets DAL's durable downgrade guard and revokes existing
+  sessions through its database revocation epoch and Cognito global sign-out.
+  Existing MFA grants and replay attempts cannot bypass the guard.
+- Authentication and setup responses use `Cache-Control: no-store`. Secrets,
+  passwords, recovery codes, and Cognito sessions must not be logged.
 
-Prefer restoring the authenticator from the user's offline backup of the manual
-setup secret. Never transmit that backup to support. Password-reset or mailbox
-access alone is not MFA recovery. No public endpoint or normal API token can
-remove MFA without the current factor.
+MFA challenges are bounded, single-use, and held in process-local memory with a
+three-minute lifetime. The production topology uses one API instance; adding
+instances requires a shared atomic challenge store or safe authenticated
+session affinity. A lost pending challenge requires restarting sign-in.
 
-If no backup exists, use a separately authorized operator-assisted process:
-verify identity against independent, previously established organizational or
-in-person evidence (not newly supplied documents/contacts or an email reply).
-Require an independent operator's approval, record a non-secret incident reference,
-notify existing verified contacts, and reject the recovery if independent proof is
-unavailable. This can mean the account remains inaccessible; package ownership is
-not transferred by a recovery request. Never ask for a password or TOTP secret.
+## Recovery codes
 
-Only after that approval may a restricted operator remove the Cognito software
-factor using `AdminDeleteSoftwareToken`, revoke all Cognito sessions, and advance
-DAL's `users.session_invalid_before`. Reconcile `user_mfa.required=false` for the
-verified account in a reviewed transaction, revoke its API tokens as an incident
-response, and require a new password and new enrollment before resuming privileged
-work. The runtime principal must NOT have AdminDeleteSoftwareToken permission.
-Do not provide an email-only or silent support override. These live recovery steps
-require separate authorization and must be rehearsed on a disposable pool first.
+DAL generates **ten random 256-bit, single-use recovery codes** at successful
+TOTP enrollment. The codes are shown only in the successful response; only
+SHA-256 hashes are stored in `mfa_recovery_codes` under forced RLS. Users should
+save the codes offline before leaving the confirmation screen.
+
+An enrolled, signed-in user may rotate codes through `/settings/security` using
+both a fresh password and current TOTP code. Rotating codes invalidates all
+previously generated recovery codes.
+
+When an authenticator is lost, the user first passes the Cognito password step.
+DAL then permits a recovery code to be submitted using the short-lived pending
+MFA cookie. A valid recovery code is consumed atomically and does **not** sign
+in the user or create a DAL session. Instead, the server requests the Cognito
+software-token reset, completes the protected database recovery grant, revokes
+existing sessions and API tokens, and requires the user to sign in again and
+set up a new authenticator.
+
+This uses migration `0013_mfa_recovery_codes.sql`. The API role has
+`cognito-idp:AdminDeleteSoftwareToken` restricted to the DAL user-pool ARN; the
+worker has no such permission. Provider errors or uncertain partial outcomes
+fail closed. Do not clear the persistent MFA guard to resolve failed recovery.
+
+Password reset or access to a verified email address alone cannot remove MFA.
+For exceptional operator-assisted recovery, verify identity independently,
+record the incident without secrets, and follow controlled reset and revocation
+procedures. Never request a user's password or authenticator secret.
+
+## Operational checks
+
+- Confirm password-only login for a non-enrolled account and challenged login
+  for an enrolled account.
+- Verify the first-time codes appear after setup, can be saved, and are not
+  retrievable again from the server.
+- Verify code rotation requires fresh password and TOTP and invalidates old codes.
+- Verify a recovery code cannot be reused, does not issue a session, and revokes
+  previous sessions and API tokens after factor reset.
+- Verify the new authenticator setup and subsequent TOTP-protected login.
+- Review authentication logs without exposing passwords, OTPs, or recovery codes.
 
 AWS references: [TOTP behavior](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-mfa-totp.html),
 [pool configuration](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserPoolMfaConfig.html),
-[operator reset](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteSoftwareToken.html).
-
-
-## One-time user recovery codes (migration 0013)
-
-After enrollment and sign-in, a user can generate ten 256-bit one-use recovery codes
-in `/settings/security`, using their existing password and current TOTP code.
-Only SHA-256 hashes are persisted; plaintext is returned once with no-store
-headers. Regeneration invalidates earlier codes. A recovery code is accepted
-only after a verified Cognito password created a three-minute pending MFA cookie.
-It does NOT create an authenticated DAL session. Instead it deletes the Cognito
-TOTP registration using `AdminDeleteSoftwareToken`, invalidates all current DAL
-sessions and API tokens, clears the durable MFA guard, and requires a fresh
-password sign-in and immediate new authenticator enrollment.
-
-The server role (not worker) must explicitly receive
-`cognito-idp:AdminDeleteSoftwareToken` scoped to the existing user-pool ARN.
-Do not enable this public recovery flow until migration 0013, SDK support,
-role policy, Cognito-local integration tests and browser checks are validated.
-Failure between provider deletion and database finalization intentionally fails
-closed and needs operator reconciliation; never clear the guard on AWS errors.
+[software-token reset](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteSoftwareToken.html).
